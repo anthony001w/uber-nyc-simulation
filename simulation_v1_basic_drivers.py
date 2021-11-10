@@ -3,6 +3,8 @@ import numpy as np
 import time
 from tqdm import tqdm
 from collections import deque
+from joblib import dump
+import os
 
 pickup_data = pd.read_pickle('arrival_and_dropoff_distributions')
 hourly_arrival_rate =  pickup_data.apply(lambda item: item[0])
@@ -78,7 +80,7 @@ def insert_event(event, queue, time_index = -1):
     queue.insert(i, event)
 
 #assumes customer info mat is a dataframe with idx, time, pulocationid, dolocationid, service
-def return_customer_info(idx, cust_info_mat = arrivals):
+def return_customer_info(idx, cust_info_mat):
     sr = cust_info_mat.loc[idx]
     return idx, sr.time, sr.pulocationid, sr.dolocationid, sr.service
     
@@ -211,7 +213,7 @@ def simulate_with_individual_drivers(arrivals,
         
         #if passenger arrival
         if driver_id == -1:
-            cust_id, pu_time, pu, do, serv = return_customer_info(pass_id)
+            cust_id, pu_time, pu, do, serv = return_customer_info(pass_id, arrivals)
             
             """driver selection
                pick a random driver in the beginning
@@ -274,7 +276,7 @@ def simulate_with_individual_drivers(arrivals,
                 if len(driver_queues[driver_id]) > 0:
                     
                     next_customer = driver_queues[driver_id][0]
-                    cust_id, pu_time, pu, do, serv = return_customer_info(next_customer)
+                    cust_id, pu_time, pu, do, serv = return_customer_info(next_customer, arrivals)
                     
                     #if the queued customer is in the current zone
                     if pu == dropoff:
@@ -322,7 +324,7 @@ def simulate_with_individual_drivers(arrivals,
                 if len(driver_queues[driver_id]) > 0:
                     
                     next_customer = driver_queues[driver_id].popleft()
-                    cust_id, pu_time, pu, do, serv = return_customer_info(next_customer)
+                    cust_id, pu_time, pu, do, serv = return_customer_info(next_customer, arrivals)
                     
                     departure_event = np.array([driver_id,
                                                 cust_id,
@@ -349,7 +351,7 @@ def simulate_with_individual_drivers(arrivals,
     
     return passenger_departure_times, stats 
 
-def simulate(days = 10, driver_count = 15000, distributed_queue_count = 20):
+def simulate(days = 10, driver_count = 15000, distributed_queue_count = 20, save_arrival_dataframes = True):
 
 	w, extra = [], []
 	for i in range(days):
@@ -358,9 +360,17 @@ def simulate(days = 10, driver_count = 15000, distributed_queue_count = 20):
 			driver_count = driver_count, 
 			distributed_queue_count = distributed_queue_count)
 		wait_times = (pd.Series(simulated_information[0]).sort_index() - arrivals.time - arrivals.service).round(3)
-		w.append(wait_times)
+		arrivals['wait_time'] = wait_times
+		if save_arrival_dataframes:
+			if i == 0:
+				#create the folder
+				os.mkdir('simulation_output')
+			arrivals.to_csv('simulation_output/day' + str(i) + 'arrivals')
+		w.append(arrivals)
 		extra.append(simulated_information[1:])
+		print('Day ',i,' Mean/Median Wait Time: ',wait_times.mean(),' ',wait_times.median())
 
 	return w, extra
 
-simulate(days = 5)
+simulate(days = 30)
+
