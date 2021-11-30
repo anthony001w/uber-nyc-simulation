@@ -88,6 +88,7 @@ class City:
             
             #pick another driver based on the closest zones
             #if there's no free driver in the list of closest zones, pick a free driver out of the whole list
+            chosen_driver = None
             
             #pick a random free driver
             if len(self.free_drivers) > 0:
