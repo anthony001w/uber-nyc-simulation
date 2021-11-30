@@ -167,7 +167,7 @@ def simulate_n_days(n,
         passenger_details.append(waiting_times)
         print(f'Average Waiting Time: {waiting_times.waiting_time.mean()}')
         print(f'Median Waiting Time: {np.median(waiting_times.waiting_time)}')
-        print(f'Simulation System Speed: {e.timed_stats}')
+        print(f'Simulation System Speed: {e.timed_stats} \n --- End of Day {i} ---')
         
         if i == n - 1:
             driver_history = d
@@ -181,6 +181,8 @@ output_file_name = input(('Enter output file name: '))
 passenger_details, dhistory, chistory = simulate_n_days(num_replications, driver_count = num_drivers)
 
 dir_name = 'output_' + output_file_name
+if os.exists(dir_name):
+    os.rmdir(dir_name)
 os.mkdir(dir_name)
 passenger_details.to_parquet(dir_name + '/passenger_parquet')
 dump(dhistory, dir_name + '/driver_history_example')
