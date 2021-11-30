@@ -6,13 +6,14 @@ from joblib import dump,load
 from collections import deque
 from shapely.geometry import Polygon, Point
 from tqdm import tqdm
-from class_def import *
+from city_elements import *
+from city import *
+from event_list import *
 
 SCREEN_SIZE = (1200,800)
 FPS = 30
-SPEED_OF_SIM = 30
-NUM_DRIVERS_SIMMED = 500
-DRIVER_MOVEMENT_FILENAME = 'driver_history'
+SPEED_OF_SIM = 120
+DRIVER_MOVEMENT_FILENAME = '../driver_history'
 
 class DriverAnimation:
 
@@ -34,7 +35,7 @@ class DriverAnimation:
 				#set the center and direction
 				self.center = curr_anim.start
 				self.speed = curr_anim.velocity
-				curr_anim.frames_covered += 1 
+				curr_anim.update()
 
 			elif curr_anim.frames_covered > curr_anim.total_frames:
 
@@ -49,21 +50,39 @@ class DriverAnimation:
 
 				#change the position of the center of the driver rectangle
 				self.center += self.speed
-				curr_anim.frames_covered += 1
+				curr_anim.update()
 
 		return self.center
 
+	def has_passenger(self):
+		if self.current_animation_index < len(self.animations):
+			return self.animations[self.current_animation_index].passenger
+		else:
+			return False
+
 class Animation:
 
-	def __init__(self, start_pos, end_pos, velocity, approx_frames):
+	def __init__(self, start_time_system, end_time_system, start_pos, end_pos, velocity, approx_frames, passenger):
+		self.start_time = start_time_system
+		self.end_time = end_time_system
+		self.current_time = start_time_system #in minutes
 		self.start = start_pos #tuple/np.array
 		self.end = end_pos #tuple/np.array
 		self.velocity = velocity #tuple/np.array
 		self.total_frames = approx_frames #float number of frames
 		self.frames_covered = 0
+		self.passenger = passenger #T/F
 
 	def reset(self):
 		self.frames_covered = 0
+		self.current_time = self.start_time
+
+	def update(self):
+		self.frames_covered += 1
+		if self.total_frames == 0.0001:
+			self.current_time = self.start_time
+		else:
+			self.current_time += (self.end_time - self.start_time)/self.total_frames
 
 def add_polygons(lists, poly_list, region_id):
     
@@ -132,14 +151,16 @@ def extract_movement_information(dm, starting_position, polygon_dict):
     current_position = random_point_within(starting_position[1], polygon_dict)
     current_time = starting_position[0]
     movement_list = []
-    
+
     #dm alternates between (start of movement to location) (end of movement to location)
     #cut the list into (departures) (arrivals) and iterate
-    for d, a in zip(dm[::2], dm[1::2]):
+    for i in range(0,len(dm) // 2,2):
+    	d = dm[i]
+    	a = dm[i + 1]
     	start_pos = current_position
     	end_pos = random_point_within(a[1], polygon_dict)
-    	movement_list.append([current_position, current_position, current_time, d[0]])
-    	movement_list.append([start_pos, end_pos, d[0], a[0]])
+    	movement_list.append((current_position, current_position, current_time, d[0], False))
+    	movement_list.append((start_pos, end_pos, d[0], a[0], d[-1] is not None))
     	current_position = end_pos
     	current_time = a[0]
 
@@ -154,12 +175,16 @@ def random_point_within(zone_id, polygon_dict):
 	#then select a random point using acceptance/rejection sampling
 	min_x, min_y, max_x, max_y = poly.bounds
 
-	for i in range(10):
-		x = np.random.uniform(min_x, max_x)
-		y = np.random.uniform(min_y, max_y)
-		random_point = Point([x, y])
+	num_tries = 30
+
+	xs = np.random.uniform(min_x, max_x, num_tries)
+	ys = np.random.uniform(min_y, max_y, num_tries)
+
+	for i in range(num_tries):
+		p = [xs[i], ys[i]]
+		random_point = Point(p)
 		if (random_point.within(poly)):
-			return np.floor(np.array([x,y]))
+			return np.floor(np.array(p))
 
 	return np.floor(np.array([min_x, min_y]))
 		
@@ -185,9 +210,10 @@ def add_animation_data_to_movements(movement_list, scaling = SPEED_OF_SIM, fps =
 		end_pos = m[1]
 		start_time = m[2]
 		end_time = m[3]
+		passenger = m[4]
 		v, f = calc_velocity(start_pos, end_pos, start_time, end_time, scaling, fps)
 
-		animation_attributes.append(Animation(start_pos, end_pos, v, f))
+		animation_attributes.append(Animation(start_time, end_time, start_pos, end_pos, v, f, passenger))
 
 	return animation_attributes
 
@@ -221,7 +247,6 @@ else:
 drivers = load(DRIVER_MOVEMENT_FILENAME)
 
 #start with just the first driver movement
-#starting_pos, movements = dmovements[0][0], list(dmovements[0])[1:]
 
 """to convert movement data into an animation, maybe make a dot that moves across the screen?
    if it's at 60 fps, then gotta determine the vector + speed of movement from point a to b
@@ -230,42 +255,66 @@ drivers = load(DRIVER_MOVEMENT_FILENAME)
    direction = scaling / fps * (time end - time start) * [x end - x start, y end - y start]
 """
 
-driver_animations = []
-for d in tqdm(drivers[:NUM_DRIVERS_SIMMED], position = 0, leave = True):
-	m = d.movement_history
+import time
+
+def driver_to_animation(driver, z = zone_dict):
+	m = driver.movement_history
 	start_pos = m[0]
 	movements = m[1:]
-	d = extract_movement_information(movements, start_pos, zone_dict)
-	animations = add_animation_data_to_movements(d)
-	driver_animations.append(DriverAnimation(animations))
+	driver_movements = extract_movement_information(movements, start_pos, zone_dict)
+	animations = add_animation_data_to_movements(driver_movements)
+	return DriverAnimation(animations)
+
+driver_animations = [driver_to_animation(d) for d in tqdm(drivers, position = 0, leave = True)]
 
 #initalize screen and stuff
+pygame.init()
 size = width, height = SCREEN_SIZE
 
-driver_image = pygame.image.load('car.jpg')
-driver_image = pygame.transform.scale(driver_image, (2,2))
-driver_rectangles = [driver_image.get_rect() for i in range(len(driver_animations))]
+driver_with_passenger = pygame.image.load('passenger.png')
+driver_with_passenger = pygame.transform.scale(driver_with_passenger, (2,2))
+
+driver_without_passenger = pygame.image.load('nopassenger.png')
+driver_without_passenger = pygame.transform.scale(driver_without_passenger, (3,3))
+driver_rectangles = [driver_without_passenger.get_rect() for i in range(len(driver_animations))]
 
 screen = pygame.display.set_mode(size)
 
 clock = pygame.time.Clock()
+sys_time = 0
+font = pygame.font.SysFont('Trebuchet MS', 20)
 while True:
 
 	clock.tick(FPS)
+
 	for event in pygame.event.get():
 		if event.type == pygame.QUIT:
 			pygame.quit()
 			quit()
 
-	#animation handling
-	for driver, rect in zip(driver_animations, driver_rectangles):
-		rect.center = driver.update()
-
 	#showing animations
 	screen.fill([160, 160, 160])
 	draw_bg(xy_pixel_polygons, screen)
 
-	for rect in driver_rectangles:
-		screen.blit(driver_image, rect)
+	#animation handling
+	for driver, rect in zip(driver_animations, driver_rectangles):
+		rect.center = driver.update()
+		if driver.current_animation_index < len(driver.animations):
+			animation_time = driver.animations[driver.current_animation_index].current_time
+			if animation_time >= sys_time:
+				sys_time = round(animation_time)
+		if driver.has_passenger():
+			screen.blit(driver_with_passenger, rect)
+		else:
+			screen.blit(driver_without_passenger, rect)
+
+	hour_font = font.render('Hour:{0:02}'.format(sys_time // 60), 1, (0,0,0))
+	minute_font = font.render('Minute:{0:02}'.format(sys_time % 60), 1, (0,0,0))
+	hour_rect = hour_font.get_rect()
+	hour_rect.center = (40,40)
+	minute_rect = minute_font.get_rect()
+	minute_rect.center = (160,40)
+	screen.blit(hour_font, hour_rect)
+	screen.blit(minute_font, minute_rect)
 
 	pygame.display.flip()

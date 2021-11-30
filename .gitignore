@@ -140,3 +140,4 @@ cython_debug/
 # project specific stuff 
 January-2020-uber-data.csv
 Simulation_output
+output_*
