@@ -32,6 +32,17 @@ class City:
         
     def get_zone(self, zone_id):
         return self.zones[zone_id]
+
+    def process_event(self, event):
+
+        if event.type == 'Arrival':
+            return self.process_arrival_event(event)
+
+        elif event.type == 'Movement':
+            return self.process_movement_event(event)
+
+        elif event.type == 'Trip':
+            return self.process_trip_event(event)
     
     #generates a random movement time assuming service times are exponentially distributed
     def generate_movement_time(self, pu, do):
@@ -55,7 +66,7 @@ class City:
         dropoff_zone = self.get_zone(event.passenger.end)
         
         #get best avaiable driver and check status
-        chosen_driver = pickup_zone.get_best_available_driver()
+        chosen_driver = pickup_zone.get_available_driver()
         if chosen_driver is not None:
             if chosen_driver.status() == 'Idle':
                 #return a trip event
@@ -77,17 +88,19 @@ class City:
             
             #pick another driver based on the closest zones
             #if there's no free driver in the list of closest zones, pick a free driver out of the whole list
-            for zone_id in self.closest_zones[event.passenger.start].index:
-                zone = self.get_zone(zone_id)
-                if len(zone.drivers) != 0:
-                    chosen_driver = zone.get_best_available_driver()
-                    break
             
             #pick a random free driver
             if len(self.free_drivers) > 0:
-                chosen_driver = self.free_drivers.pop()
-                self.free_drivers.add(chosen_driver)
-                zone = self.get_zone(chosen_driver.zone)
+                for zone_id in self.closest_zones[event.passenger.start].index:
+                    zone = self.get_zone(zone_id)
+                    chosen_driver = zone.get_available_driver()
+                    if chosen_driver is not None:
+                        break
+
+                if chosen_driver is None:
+                    chosen_driver = self.free_drivers.pop()
+                    self.free_drivers.add(chosen_driver)
+                    zone = self.get_zone(chosen_driver.zone)
 
             #last case scenario if no driver is available, just choose any driver
             if chosen_driver is None:

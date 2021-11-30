@@ -124,23 +124,13 @@ def simulate_with_individual_drivers(arrivals,
     while not event_list.is_finished():
         
         event = event_list.iterate_next_event()
-        
-        #based on the type of event
-        if event.type == 'Arrival':
-            result = city.process_arrival_event(event)
-            if result is not None:
-                event_list.insert_event(result)
-            
-        elif event.type == 'Movement':
-            result = city.process_movement_event(event)
-            if result is not None:
-                event_list.insert_event(result)
-            
-        elif event.type == 'Trip':
+
+        result = city.process_event(event)
+        if event.type == 'Trip':
             pbar.update(1)
-            result = city.process_trip_event(event)
-            if result is not None:
-                event_list.insert_event(result)        
+
+        if result is not None:
+            event_list.insert_event(result)    
                 
     return passengers, drivers, city, event_list
 
@@ -178,11 +168,13 @@ def simulate_n_days(n,
 num_replications = int(input('Enter number of replications: '))
 num_drivers = int(input('Enter number of drivers: '))
 output_file_name = input(('Enter output file name: '))
-passenger_details, dhistory, chistory = simulate_n_days(num_replications, driver_count = num_drivers)
 
 dir_name = 'output_' + output_file_name
-if os.exists(dir_name):
+if os.path.exists(dir_name):
     os.rmdir(dir_name)
 os.mkdir(dir_name)
+
+passenger_details, dhistory, chistory = simulate_n_days(num_replications, driver_count = num_drivers)
+
 passenger_details.to_parquet(dir_name + '/passenger_parquet')
 dump(dhistory, dir_name + '/driver_history_example')

@@ -66,20 +66,12 @@ class Zone:
             driver.zone = self.zone
         self.incoming_drivers = set()
         
-    def get_best_available_driver(self):
-        available_incoming = [d for d in self.incoming_drivers if not d.hit_maximum_passenger_queue_size()]
+    def get_available_driver(self):
         if len(self.drivers) == 0:
-            if len(available_incoming) == 0:
-                return None
-            return min(available_incoming, key = lambda d: len(d.passenger_queue))
-        return min(self.drivers, key = lambda d: len(d.passenger_queue))
-    
-    def get_any_driver(self):
-        if len(self.drivers) == 0:
-            if len(self.incoming_drivers) == 0:
-                return None
-            return min(self.incoming_drivers, key = lambda d: len(d.passenger_queue))
-        return min(self.drivers, key = lambda d: len(d.passenger_queue))
+            return None
+        d = self.drivers.pop()
+        self.drivers.add(d)
+        return d
     
     def add_driver(self, driver, incoming = False):
         if incoming:
