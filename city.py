@@ -15,20 +15,27 @@ class City:
         
         #use the odmatrix to judge the closest zones
         #dictionary of values with key = zone_id
-        #and the value is a Pandas series where the index is the zone id and the value is the mean trip time
-        #ordered ascending in terms of mean trip time (not including the same zone)
-        #used for choosing drivers
+        #and the value is a pandas index listing the closest zones by mean travel time
         self.closest_zones = {}
-        for i in odmatrix.index:
-            ordered = odmatrix.loc[i].dropna().sort_values()
+        for i in np.arange(1,264):
+            dotimes = self.odmatrix.loc[i]
+            ordered = dotimes[~(dotimes == 0).all(axis=1)].sort_values(by = 'mean')
             if i in ordered.index:
                 ordered = ordered.drop(index = i)
-            self.closest_zones[i] = ordered
+            self.closest_zones[i] = ordered.index
         
         #set some default value using the overall mean
         #doesn't take into account anything, is definitely a bad solution
         #better is to take into account geographic distance and maybe traffic
-        self.default_movement_mean = np.nanmean(odmatrix.values)
+        default_means = []
+        for i in np.arange(1,264):
+            do_info = self.odmatrix.loc[(slice(None),i),:]
+            exp_mean = np.sum(do_info['mean'] * do_info['count']) / do_info['count'].sum()
+            default_means.append(exp_mean)
+        self.default_times = pd.Series(default_means, index = np.arange(1,264))
+        
+        self.timed_stats = {'generating_movement_times':[0,0],
+                            'choose_driver':[0,0]}
         
     def get_zone(self, zone_id):
         return self.zones[zone_id]
@@ -44,22 +51,20 @@ class City:
         elif event.type == 'Trip':
             return self.process_trip_event(event)
     
-    #generates a random movement time assuming service times are exponentially distributed
     def generate_movement_time(self, pu, do):
-
-        #try except just catches the case where there's no pickup data for a zone
-        try:
-            mm = self.odmatrix.loc[pu, do]
-            if not pd.isnull(mm):
-                mt = np.random.exponential(mm)
-            else:
-                #if there's no data for that specific pu->do, just use the mean of the pu zone trips
-                mt = np.random.exponential(self.odmatrix.loc[pu].mean())
-        except:
-            #if no data on that pickup zone, use the mean of the dropoff zone
-            mt = np.random.exponential(self.odmatrix.loc[:,do].mean())
-        return mt
-            
+        
+        tic = time.time()
+        movement_info = self.odmatrix.loc[pu,do]
+        if (movement_info == 0).all():
+            #if there's no movement information, try to generate an exponential var from the weighted
+            #mean for the dropoff location
+            m = np.random.exponential(self.default_times.loc[do])
+        else:
+            m = max(np.random.normal(loc = movement_info['mean'], scale = movement_info['std']), movement_info['min'])
+        toc = time.time()
+        self.timed_stats['generating_movement_times'][0] += toc - tic
+        self.timed_stats['generating_movement_times'][1] += 1
+        return m
     
     def process_arrival_event(self, event):
         pickup_zone = self.get_zone(event.passenger.start)
@@ -90,9 +95,10 @@ class City:
             #if there's no free driver in the list of closest zones, pick a free driver out of the whole list
             chosen_driver = None
             
+            tic = time.time()
             #pick a random free driver
             if len(self.free_drivers) > 0:
-                for zone_id in self.closest_zones[event.passenger.start].index:
+                for zone_id in self.closest_zones[event.passenger.start]:
                     zone = self.get_zone(zone_id)
                     chosen_driver = zone.get_available_driver()
                     if chosen_driver is not None:
@@ -107,6 +113,9 @@ class City:
             if chosen_driver is None:
                 chosen_driver = self.busy_drivers.pop()
                 self.busy_drivers.add(chosen_driver)
+            toc = time.time()
+            self.timed_stats['choose_driver'][0] += toc - tic
+            self.timed_stats['choose_driver'][1] += 1
             
             #using this chosen driver, check status
             if chosen_driver.status() == 'Idle':

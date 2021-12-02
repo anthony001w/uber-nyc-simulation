@@ -12,8 +12,8 @@ from event_list import *
 
 SCREEN_SIZE = (1200,800)
 FPS = 30
-SPEED_OF_SIM = 120
-DRIVER_MOVEMENT_FILENAME = '../driver_history'
+SPEED_OF_SIM = 30
+DRIVER_MOVEMENT_FILENAME = '../output_d12k_50repl/driver_history_example'
 
 class DriverAnimation:
 
@@ -59,6 +59,12 @@ class DriverAnimation:
 			return self.animations[self.current_animation_index].passenger
 		else:
 			return False
+
+	def get_time(self):
+		if self.current_animation_index < len(self.animations):
+			return self.animations[self.current_animation_index].current_time
+		else:
+			return None
 
 class Animation:
 
@@ -147,10 +153,10 @@ def convert_polygons_for_sampling(xy_pixel_polygons):
 			zone_polygon_dict[zone_id].append(Polygon(coord_list))
 	return zone_polygon_dict
 
-def extract_movement_information(dm, starting_position, polygon_dict):
+def extract_animations(dm, starting_position, polygon_dict, scaling = SPEED_OF_SIM, fps = FPS):
     current_position = random_point_within(starting_position[1], polygon_dict)
     current_time = starting_position[0]
-    movement_list = []
+    animation_list = []
 
     #dm alternates between (start of movement to location) (end of movement to location)
     #cut the list into (departures) (arrivals) and iterate
@@ -159,12 +165,14 @@ def extract_movement_information(dm, starting_position, polygon_dict):
     	a = dm[i + 1]
     	start_pos = current_position
     	end_pos = random_point_within(a[1], polygon_dict)
-    	movement_list.append((current_position, current_position, current_time, d[0], False))
-    	movement_list.append((start_pos, end_pos, d[0], a[0], d[-1] is not None))
+    	v, f = calc_velocity(current_position, current_position, current_time, d[0])
+    	animation_list.append(Animation(current_time, d[0], current_position, current_position, v, f, False))
+    	v, f = calc_velocity(start_pos, end_pos, d[0], a[0])
+    	animation_list.append(Animation(d[0], a[0], start_pos, end_pos, v, f, d[-1] is not None))
     	current_position = end_pos
     	current_time = a[0]
 
-    return movement_list
+    return animation_list
 
 #return a random point within the zone given a polygon dictionary
 def random_point_within(zone_id, polygon_dict):
@@ -200,22 +208,6 @@ def calc_velocity(start_pos, end_pos, stime, etime, scaling = SPEED_OF_SIM, fps 
 	velocity = 1/frames * (end_pos - start_pos)
 
 	return velocity, frames
-
-def add_animation_data_to_movements(movement_list, scaling = SPEED_OF_SIM, fps = FPS):
-
-	animation_attributes = []
-
-	for m in movement_list:
-		start_pos = m[0]
-		end_pos = m[1]
-		start_time = m[2]
-		end_time = m[3]
-		passenger = m[4]
-		v, f = calc_velocity(start_pos, end_pos, start_time, end_time, scaling, fps)
-
-		animation_attributes.append(Animation(start_time, end_time, start_pos, end_pos, v, f, passenger))
-
-	return animation_attributes
 
 def draw_bg(poly_list, s):
 	for p in poly_list:
@@ -261,8 +253,7 @@ def driver_to_animation(driver, z = zone_dict):
 	m = driver.movement_history
 	start_pos = m[0]
 	movements = m[1:]
-	driver_movements = extract_movement_information(movements, start_pos, zone_dict)
-	animations = add_animation_data_to_movements(driver_movements)
+	animations = extract_animations(movements, start_pos, zone_dict)
 	return DriverAnimation(animations)
 
 driver_animations = [driver_to_animation(d) for d in tqdm(drivers, position = 0, leave = True)]
@@ -299,17 +290,16 @@ while True:
 	#animation handling
 	for driver, rect in zip(driver_animations, driver_rectangles):
 		rect.center = driver.update()
-		if driver.current_animation_index < len(driver.animations):
-			animation_time = driver.animations[driver.current_animation_index].current_time
-			if animation_time >= sys_time:
-				sys_time = round(animation_time)
+		animation_time = driver.get_time()
+		if animation_time is not None and animation_time >= sys_time:
+			sys_time = animation_time
 		if driver.has_passenger():
 			screen.blit(driver_with_passenger, rect)
 		else:
 			screen.blit(driver_without_passenger, rect)
 
-	hour_font = font.render('Hour:{0:02}'.format(sys_time // 60), 1, (0,0,0))
-	minute_font = font.render('Minute:{0:02}'.format(sys_time % 60), 1, (0,0,0))
+	hour_font = font.render('Hour:{0:02}'.format(round(sys_time // 60)), 1, (0,0,0))
+	minute_font = font.render('Minute:{0:02}'.format(round(sys_time % 60)), 1, (0,0,0))
 	hour_rect = hour_font.get_rect()
 	hour_rect.center = (40,40)
 	minute_rect = minute_font.get_rect()

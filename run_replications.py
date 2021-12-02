@@ -11,21 +11,21 @@ import os
 pickup_data = pd.read_pickle('arrival_and_dropoff_distributions')
 hourly_arrival_rate =  pickup_data.apply(lambda item: item[0])
 dropoff_frequency  = pickup_data.apply(lambda  item: item[1] / item[1].sum())
-trip_time_data = pd.read_csv('trip_time_means.csv', index_col = 'pulocationid')
-trip_time_data.columns = trip_time_data.columns.astype(int)
+trip_time_data = pd.read_parquet('trip_time_means')
 
 def generate_arrivals_per_zone(zone_hourly_arrivals = hourly_arrival_rate, 
                                zone_dropoff_frequencies = dropoff_frequency, 
                                zone_to_zone_times = trip_time_data, 
-                               one_list = True):
+                               one_list = True,
+                               show_progress_bar = False):
     
     #check to make sure the indices match
     assert (zone_hourly_arrivals.index == zone_dropoff_frequencies.index).all()
-    assert (zone_hourly_arrivals.index == zone_to_zone_times.index).all()
     
     zone_arrivals = []
     #for each zone, generate a day's worth of arrivals
-    for i in zone_hourly_arrivals.index:
+    iterable = zone_hourly_arrivals.index if not show_progress_bar else tqdm(zone_hourly_arrivals.index, position = 0, leave = True)
+    for i in iterable:
         
         hourly_rates = zone_hourly_arrivals.loc[i]
         dropoff_dist = zone_dropoff_frequencies.loc[i]
@@ -57,11 +57,13 @@ def generate_arrivals_per_zone(zone_hourly_arrivals = hourly_arrival_rate,
         
         #each arrival, generate a service time from the service time distributions
         #this is SLOW
-        services = [np.random.exponential(mean) for mean in zone_service_times[arrival_df.dolocationid]]
-                
-        arrival_df['service'] = services
-        
-        zone_arrivals.append(arrival_df)
+        if len(arrival_df) > 0:
+            services = [np.clip(np.random.normal(loc = info[0], scale = info[1]), info[2], info[3]) 
+                        for info in zone_service_times.loc[arrival_df.dolocationid].values]
+
+            arrival_df['service'] = services
+
+            zone_arrivals.append(arrival_df)
     
     #if one list, then combine everything into one big arrival matrix
     #otherwise, just return the list of arrival dataframes
