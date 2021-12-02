@@ -11,14 +11,19 @@ class City:
         self.zones = {z.zone: z for z in zone_list}
         self.free_drivers = set(drivers)
         self.busy_drivers = set()
-        self.odmatrix = odmatrix
+        self.odmatrix = []
+
+        #convert odmatrix into a list of lists (faster access)
+        for i in np.arange(1,264):
+            list_of_info = [v for v in odmatrix.loc[i].values]
+            self.odmatrix.append(list_of_info)
         
         #use the odmatrix to judge the closest zones
         #dictionary of values with key = zone_id
         #and the value is a pandas index listing the closest zones by mean travel time
         self.closest_zones = {}
         for i in np.arange(1,264):
-            dotimes = self.odmatrix.loc[i]
+            dotimes = odmatrix.loc[i]
             ordered = dotimes[~(dotimes == 0).all(axis=1)].sort_values(by = 'mean')
             if i in ordered.index:
                 ordered = ordered.drop(index = i)
@@ -29,11 +34,17 @@ class City:
         #better is to take into account geographic distance and maybe traffic
         default_means = []
         for i in np.arange(1,264):
-            do_info = self.odmatrix.loc[(slice(None),i),:]
-            exp_mean = np.sum(do_info['mean'] * do_info['count']) / do_info['count'].sum()
-            default_means.append(exp_mean)
-        self.default_times = pd.Series(default_means, index = np.arange(1,264))
-        
+            do_info = odmatrix.loc[(slice(None),i),:]
+            if do_info['count'].sum() == 0:
+                do_info = odmatrix.loc[(i,slice(None)),:]
+            if do_info['count'].sum() != 0:
+                #ignore the zone bc there's no pickups or dropoffs from it
+                exp_mean = np.sum(do_info['mean'] * do_info['count']) / do_info['count'].sum()
+                default_means.append(exp_mean)
+            else:
+                default_means.append(np.mean(default_means))
+        self.default_times = default_means
+
         self.timed_stats = {'generating_movement_times':[0,0],
                             'choose_driver':[0,0]}
         
@@ -54,13 +65,13 @@ class City:
     def generate_movement_time(self, pu, do):
         
         tic = time.time()
-        movement_info = self.odmatrix.loc[pu,do]
+        movement_info = self.odmatrix[pu - 1][do - 1]
         if (movement_info == 0).all():
             #if there's no movement information, try to generate an exponential var from the weighted
             #mean for the dropoff location
-            m = np.random.exponential(self.default_times.loc[do])
+            m = np.random.exponential(self.default_times[do - 1])
         else:
-            m = max(np.random.normal(loc = movement_info['mean'], scale = movement_info['std']), movement_info['min'])
+            m = max(np.random.normal(loc = movement_info[0], scale = movement_info[1]), movement_info[2])
         toc = time.time()
         self.timed_stats['generating_movement_times'][0] += toc - tic
         self.timed_stats['generating_movement_times'][1] += 1
@@ -79,9 +90,8 @@ class City:
                 #edit driver's passenger variable
                 #update driver movement history
                 pickup_zone.remove_driver(chosen_driver)
-                dropoff_zone.add_driver(chosen_driver, incoming = True)
                 chosen_driver.passenger = event.passenger
-                chosen_driver.add_movement(event.time, event.passenger.end, event.passenger)
+                chosen_driver.add_movement(event.time, event.passenger.start, event.passenger.end, event.passenger)
                 self.free_drivers.remove(chosen_driver)
                 self.busy_drivers.add(chosen_driver)
                 return Movement(event.time, chosen_driver, dropoff_zone, event.passenger.service, event.passenger)
@@ -123,8 +133,7 @@ class City:
                 #update the zone's drivers and the passenger's pickup zone drivers
                 #update the driver's movement history
                 zone.remove_driver(chosen_driver)
-                pickup_zone.add_driver(chosen_driver, incoming = True)
-                chosen_driver.add_movement(event.time, event.passenger.start)
+                chosen_driver.add_movement(event.time, zone.zone, event.passenger.start)
                 chosen_driver.add_passenger(event.passenger)
                 self.free_drivers.remove(chosen_driver)
                 self.busy_drivers.add(chosen_driver)
@@ -149,11 +158,7 @@ class City:
         pickup_zone = event.end_zone
         dropoff_zone = self.get_zone(passenger.end)
         
-        pickup_zone.remove_driver(driver, incoming = True)
-        dropoff_zone.add_driver(driver, incoming = True)
-        
-        driver.add_movement(event.time, passenger.start)
-        driver.add_movement(event.time, passenger.end, passenger)
+        driver.add_movement(event.time, event.end_zone, passenger.end, passenger)
         driver.passenger = passenger
         
         return Movement(event.time, driver, dropoff_zone, passenger.service, passenger)
@@ -166,8 +171,6 @@ class City:
         current_passenger.departure_time = event.time
         driver = event.driver
         driver.passenger = None
-        driver.add_movement(event.time, current_passenger.end)
-        event.end_zone.remove_driver(driver, incoming = True)
         
         #get next passenger
         passenger = driver.get_next_passenger()
@@ -186,8 +189,7 @@ class City:
                 #return a trip event
                 passenger = driver.pop_next_passenger()
                 zone = self.get_zone(passenger.end)
-                zone.add_driver(driver, incoming = True)
-                driver.add_movement(event.time, passenger.end, passenger)
+                driver.add_movement(event.time, passenger.start, passenger.end, passenger)
                 driver.passenger = passenger
                 
                 return Movement(event.time, driver, zone, passenger.service, passenger)
@@ -195,9 +197,14 @@ class City:
             else:
                 #generate a movement event to the next passenger
                 zone = self.get_zone(passenger.start)
-                zone.add_driver(driver, incoming = True)
-                driver.add_movement(event.time, passenger.start)
+                driver.add_movement(event.time, current_passenger.end, passenger.start)
                 
                 return Movement(event.time, driver, zone, self.generate_movement_time(event.end_zone.zone, zone.zone))
+
+    def formatted_stats(self):
+        s = ''
+        for name in self.timed_stats:
+            s += f'\n\t-- {name} --\n\tTotal Time Spent: {self.timed_stats[name][0]}\n\t# of Occurences: {self.timed_stats[name][1]}'
+        return s
                 
         

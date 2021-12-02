@@ -7,6 +7,22 @@ from city_elements import *
 from city import *
 from event_list import *
 import os
+import sys
+
+class Logger(object):
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.log = open(filename, "a+")
+   
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)  
+
+    def flush(self):
+        # this flush method is needed for python 3 compatibility.
+        # this handles the flush command by doing nothing.
+        # you might want to specify some extra behavior here.
+        pass    
 
 pickup_data = pd.read_pickle('arrival_and_dropoff_distributions')
 hourly_arrival_rate =  pickup_data.apply(lambda item: item[0])
@@ -24,7 +40,7 @@ def generate_arrivals_per_zone(zone_hourly_arrivals = hourly_arrival_rate,
     
     zone_arrivals = []
     #for each zone, generate a day's worth of arrivals
-    iterable = zone_hourly_arrivals.index if not show_progress_bar else tqdm(zone_hourly_arrivals.index, position = 0, leave = True)
+    iterable = zone_hourly_arrivals.index if not show_progress_bar else tqdm(zone_hourly_arrivals.index, position = 0, leave = True, desc = 'Zone Arrivals Generated')
     for i in iterable:
         
         hourly_rates = zone_hourly_arrivals.loc[i]
@@ -81,7 +97,7 @@ def simulate_with_individual_drivers(arrivals,
     drivers = []
     
     arrival_events = deque()
-    for a in arrivals.values:
+    for a in tqdm(arrivals.values, position = 0, leave = True, desc = 'Passenger Objects Created'):
         p = Passenger(a[0], a[1], a[2], a[3])
         passengers.append(p)
         arrival_events.append(Arrival(p))
@@ -94,6 +110,7 @@ def simulate_with_individual_drivers(arrivals,
         
         zones = []
         
+        pbar = tqdm(total = driver_count, position = 0, leave = True, desc = 'Driver Objects Created')
         #number of drivers per zone
         dcounts = driver_count * (arrivals.groupby('pulocationid')['time'].count() / arrivals.shape[0])
         dcounts = np.floor(dcounts)
@@ -105,6 +122,7 @@ def simulate_with_individual_drivers(arrivals,
                     d = Driver(i)
                     temp_set.add(d)
                     drivers.append(d)
+                    pbar.update(1)
                 zones.append(Zone(zone_id = i, driver_set = temp_set))
             else:
                 zones.append(Zone(zone_id = i, driver_set = set()))
@@ -117,12 +135,13 @@ def simulate_with_individual_drivers(arrivals,
             for zone in zones:
                 if zone.zone == z:
                     zone.add_driver(d)
+                    pbar.update(1)
                     break
                     
         city = City('NYC', zones, drivers, odmatrix)
             
     #iterate through the event list until no events left
-    pbar = tqdm(total = arrivals.shape[0], position = 0, leave = True)
+    pbar = tqdm(total = arrivals.shape[0], position = 0, leave = True, desc = 'Passengers Processed')
     while not event_list.is_finished():
         
         event = event_list.iterate_next_event()
@@ -147,19 +166,19 @@ def simulate_n_days(n,
     
     for i in range(n):
         print(f'--- Day {i} ---')
-        arrivals = generate_arrivals_per_zone()
+        arrivals = generate_arrivals_per_zone(show_progress_bar=True)
         p, d, c, e = simulate_with_individual_drivers(arrivals, 
                                                       driver_distribution = driver_distribution, 
                                                       driver_count = driver_count)
-        waiting_times = np.array([(pe.time, pe.start, pe.end, pe.service, pe.departure_time, pe.waiting_time()) for pe in p])
-        waiting_times = pd.DataFrame(waiting_times, columns = ['arrival_time','starting zone', 'ending zone','service_time','departure_time','waiting_time'])
+        waiting_times = np.array([(pe.time, pe.start, pe.end, pe.service, pe.waiting_time()) for pe in p])
+        waiting_times = pd.DataFrame(waiting_times, columns = ['arrival_time','starting zone', 'ending zone','service_time','waiting_time'])
         waiting_times['arrival_hour'] = waiting_times.arrival_time//60
         waiting_times['replication'] = i
         
         passenger_details.append(waiting_times)
         print(f'Average Waiting Time: {waiting_times.waiting_time.mean()}')
         print(f'Median Waiting Time: {np.median(waiting_times.waiting_time)}')
-        print(f'Simulation System Speed: {e.timed_stats} \n --- End of Day {i} ---')
+        print(f'Simulation System Speed: {e.formatted_stats()} \nMore stats: {c.formatted_stats()} \n --- End of Day {i} ---\n')
         
         if i == n - 1:
             driver_history = d
@@ -167,14 +186,25 @@ def simulate_n_days(n,
     
     return pd.concat(passenger_details), driver_history, city_history
 
-num_replications = int(input('Enter number of replications: '))
-num_drivers = int(input('Enter number of drivers: '))
-output_file_name = input(('Enter output file name: '))
+if len(sys.argv) == 4:
+    print(f'# replications: {sys.argv[1]}')
+    print(f'# drivers: {sys.argv[2]}')
+    print(f'output folder: {sys.argv[3]}')
+    num_replications = int(sys.argv[1])
+    num_drivers = int(sys.argv[2])
+    output_file_name = sys.argv[3]
+
+else:
+    num_replications = int(input('Enter number of replications: '))
+    num_drivers = int(input('Enter number of drivers: '))
+    output_file_name = input(('Enter output file name: '))
 
 dir_name = 'output_' + output_file_name
 if os.path.exists(dir_name):
     os.rmdir(dir_name)
 os.mkdir(dir_name)
+
+sys.stdout = Logger(f'{dir_name}/logfile.txt')
 
 passenger_details, dhistory, chistory = simulate_n_days(num_replications, driver_count = num_drivers)
 
