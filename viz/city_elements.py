@@ -7,10 +7,11 @@ class Driver:
     
     #can add behaviors here like time schedule, max distance allowed
     def __init__(self, start_zone):
-        self.zone = start_zone
+        self.last_location = start_zone
+        self.last_time = 0
         self.passenger = None
         self.passenger_queue = deque()
-        self.movement_history = [[0, start_zone, self.passenger]]
+        self.movement_history = []
     
     def add_passenger(self, passenger):
         self.passenger_queue.append(passenger)
@@ -25,20 +26,21 @@ class Driver:
             return None
         return self.passenger_queue[0]
     
-    def add_movement(self, start_time, destination, passenger = None):
-        self.movement_history.append([start_time, destination, passenger])
+    def add_start_of_movement(self, start_time, start):
+        #start time, end time, last location, next location, is moving, has passenger
+        self.movement_history.append((self.last_time, start_time, self.last_location, start, False, False))
+        self.last_time = start_time
+
+    def add_end_of_movement(self, end_time, end, passenger = None):
+        self.movement_history.append((self.last_time, end_time, self.last_location, end, True, passenger != None))
+        self.last_time = end_time
+        self.last_location = end
     
     def status(self):
         return 'In Transit' if self.passenger is not None or len(self.passenger_queue) > 0 else 'Idle'
-    
-    def hit_maximum_passenger_queue_size(self, max_size = 4):
-        return len(self.passenger_queue) >= max_size
-    
-    def __str__(self):
-        if self.destination is not None:
-            return f'In Transit to {self.destination} from {self.location} with {len(self.passenger_queue)} waiting passengers'
-        else:
-            return f'Currently at {self.location}'
+
+    def return_movement_dataframe(self):
+        return pd.DataFrame(self.movement_history, columns = ['start_time', 'end_time', 'start_zone', 'end_zone', 'is_moving', 'has_passenger'])
     
 class Passenger:
     
@@ -62,9 +64,6 @@ class Zone:
     def __init__(self, zone_id, driver_set):
         self.zone = zone_id
         self.drivers = driver_set
-        for driver in self.drivers:
-            driver.zone = self.zone
-        self.incoming_drivers = set()
         
     def get_available_driver(self):
         if len(self.drivers) == 0:
@@ -73,20 +72,10 @@ class Zone:
         self.drivers.add(d)
         return d
     
-    def add_driver(self, driver, incoming = False):
-        if incoming:
-            self.incoming_drivers.add(driver)
-            driver.zone = -1 * self.zone
-        else:
-            self.drivers.add(driver)
-            driver.zone = self.zone
+    def add_driver(self, driver):
+        self.drivers.add(driver)
         
-    def remove_driver(self, driver, incoming = False):
-        if incoming:
-            self.incoming_drivers.remove(driver)
-            driver.zone = None
-        else:
-            self.drivers.remove(driver)
-            driver.zone = None
+    def remove_driver(self, driver):
+        self.drivers.remove(driver)
         
     #could add additional functionality like calculating distance between zones

@@ -91,7 +91,7 @@ class City:
                 #update driver movement history
                 pickup_zone.remove_driver(chosen_driver)
                 chosen_driver.passenger = event.passenger
-                chosen_driver.add_movement(event.time, event.passenger.start, event.passenger.end, event.passenger)
+                chosen_driver.add_start_of_movement(event.time, event.passenger.start)
                 self.free_drivers.remove(chosen_driver)
                 self.busy_drivers.add(chosen_driver)
                 return Movement(event.time, chosen_driver, dropoff_zone, event.passenger.service, event.passenger)
@@ -117,7 +117,7 @@ class City:
                 if chosen_driver is None:
                     chosen_driver = self.free_drivers.pop()
                     self.free_drivers.add(chosen_driver)
-                    zone = self.get_zone(chosen_driver.zone)
+                    zone = self.get_zone(chosen_driver.last_location)
 
             #last case scenario if no driver is available, just choose any driver
             if chosen_driver is None:
@@ -133,10 +133,11 @@ class City:
                 #update the zone's drivers and the passenger's pickup zone drivers
                 #update the driver's movement history
                 zone.remove_driver(chosen_driver)
-                chosen_driver.add_movement(event.time, zone.zone, event.passenger.start)
-                chosen_driver.add_passenger(event.passenger)
                 self.free_drivers.remove(chosen_driver)
                 self.busy_drivers.add(chosen_driver)
+
+                chosen_driver.add_start_of_movement(event.time, zone.zone)
+                chosen_driver.add_passenger(event.passenger)
                 #generate a movement time from zone to zone
                 return Movement(event.time, chosen_driver, pickup_zone, self.generate_movement_time(zone.zone, pickup_zone.zone))
             
@@ -158,7 +159,8 @@ class City:
         pickup_zone = event.end_zone
         dropoff_zone = self.get_zone(passenger.end)
         
-        driver.add_movement(event.time, event.end_zone, passenger.end, passenger)
+        driver.add_end_of_movement(event.time, event.end_zone.zone)
+        driver.add_start_of_movement(event.time, event.end_zone.zone)
         driver.passenger = passenger
         
         return Movement(event.time, driver, dropoff_zone, passenger.service, passenger)
@@ -171,6 +173,7 @@ class City:
         current_passenger.departure_time = event.time
         driver = event.driver
         driver.passenger = None
+        driver.add_end_of_movement(event.time, current_passenger.end, current_passenger)
         
         #get next passenger
         passenger = driver.get_next_passenger()
@@ -189,16 +192,17 @@ class City:
                 #return a trip event
                 passenger = driver.pop_next_passenger()
                 zone = self.get_zone(passenger.end)
-                driver.add_movement(event.time, passenger.start, passenger.end, passenger)
+                
                 driver.passenger = passenger
+                driver.add_start_of_movement(event.time, passenger.start)
                 
                 return Movement(event.time, driver, zone, passenger.service, passenger)
             
             else:
                 #generate a movement event to the next passenger
                 zone = self.get_zone(passenger.start)
-                driver.add_movement(event.time, current_passenger.end, passenger.start)
-                
+                driver.add_start_of_movement(event.time, current_passenger.end)
+
                 return Movement(event.time, driver, zone, self.generate_movement_time(event.end_zone.zone, zone.zone))
 
     def formatted_stats(self):

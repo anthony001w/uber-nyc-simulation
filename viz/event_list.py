@@ -73,3 +73,9 @@ class EventList:
         
     def is_finished(self):
         return len(self.events) == 0
+
+    def formatted_stats(self):
+        s = ''
+        for name in self.timed_stats:
+            s += f'\n\t-- {name} --\n\tTotal Time Spent: {self.timed_stats[name][0]}\n\t# of Occurences: {self.timed_stats[name][1]}'
+        return s

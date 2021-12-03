@@ -8,8 +8,7 @@ class Driver:
     #can add behaviors here like time schedule, max distance allowed
     def __init__(self, start_zone):
         self.last_location = start_zone
-        self.last_location_time = 0
-        self.last_trip_passenger = False
+        self.last_time = 0
         self.passenger = None
         self.passenger_queue = deque()
         self.movement_history = []
@@ -27,21 +26,21 @@ class Driver:
             return None
         return self.passenger_queue[0]
     
-    def add_movement(self, start_time, start, end, passenger = None):
-        #generate a movement (start -> end info) for staying in the same place
-        #or moving from last location to the start location
-        se1 = (self.last_location_time, start_time)
-        sep1 = (self.last_location, start)
-        #update location and last location time
-        self.last_location = start
-        self.last_location_time = start_time
-        self.last_trip_passenger = passenger != None
+    def add_start_of_movement(self, start_time, start):
+        #start time, end time, last location, next location, is moving, has passenger
+        self.movement_history.append((self.last_time, start_time, self.last_location, start, False, False))
+        self.last_time = start_time
 
-        #append the information (along with whether a passenger is in the trip)
-        self.movement_history.append(se1, sep1, self.last_trip_passenger)
+    def add_end_of_movement(self, end_time, end, passenger = None):
+        self.movement_history.append((self.last_time, end_time, self.last_location, end, True, passenger != None))
+        self.last_time = end_time
+        self.last_location = end
     
     def status(self):
         return 'In Transit' if self.passenger is not None or len(self.passenger_queue) > 0 else 'Idle'
+
+    def return_movement_dataframe(self):
+        return pd.DataFrame(self.movement_history, columns = ['start_time', 'end_time', 'start_zone', 'end_zone', 'is_moving', 'has_passenger'])
     
 class Passenger:
     

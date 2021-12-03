@@ -209,4 +209,13 @@ sys.stdout = Logger(f'{dir_name}/logfile.txt')
 passenger_details, dhistory, chistory = simulate_n_days(num_replications, driver_count = num_drivers)
 
 passenger_details.to_parquet(dir_name + '/passenger_parquet')
-dump(dhistory, dir_name + '/driver_history_example')
+
+unique_driver_dfs = []
+i = 0
+for d in tqdm(dhistory, position = 0, leave = True, desc = 'Generated Driver Movement Histories'):
+    df = d.return_movement_dataframe()
+    df['driver_id'] = i
+    i += 1
+    unique_driver_dfs.append(df)
+unique_driver_df = pd.concat(unique_driver_dfs)
+unique_driver_df.to_parquet(dir_name + '/driver_histories_parquet')

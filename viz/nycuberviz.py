@@ -2,93 +2,78 @@ import pandas as pd
 from sodapy import Socrata
 import sys, pygame, os
 import numpy as np
-from joblib import dump,load
+from joblib import dump,load, Parallel, delayed
 from collections import deque
 from shapely.geometry import Polygon, Point
 from tqdm import tqdm
 from city_elements import *
 from city import *
 from event_list import *
+from matplotlib.path import Path
 
 SCREEN_SIZE = (1200,800)
-FPS = 30
-SPEED_OF_SIM = 30
-DRIVER_MOVEMENT_FILENAME = '../output_d12k_50repl/driver_history_example'
+if len(sys.argv) == 4:
+	FPS = int(sys.argv[1])
+	SPEED_OF_SIM = int(sys.argv[2])
+	FOLDER = sys.argv[3]
+
+else:
+	FPS = 60
+	SPEED_OF_SIM = 15
+	FOLDER = input('Enter test folder name:')
+
+DRIVER_MOVEMENT_FILENAME = f'../{FOLDER}/driver_histories_parquet'
 
 class DriverAnimation:
-
-	def __init__(self, animation_list):
-		self.animations = animation_list
-		self.center = np.array([0,0])
-		self.speed = None
-		self.current_animation_index = 0
-
-	#this function handles updating the position of the driver's rectangle
-	def update(self):
-
-		if self.current_animation_index >= len(self.animations):
-			pass
-		else:
-			curr_anim = self.animations[self.current_animation_index]
-			if curr_anim.frames_covered == 0:
-
-				#set the center and direction
-				self.center = curr_anim.start
-				self.speed = curr_anim.velocity
-				curr_anim.update()
-
-			elif curr_anim.frames_covered > curr_anim.total_frames:
-
-				#reset the current animation index
-				#reset the previous animation's frames covered
-				curr_anim.reset()
-				self.center = curr_anim.end 
-				self.current_animation_index += 1
-				self.speed = None
-
-			else:
-
-				#change the position of the center of the driver rectangle
-				self.center += self.speed
-				curr_anim.update()
-
-		return self.center
-
-	def has_passenger(self):
-		if self.current_animation_index < len(self.animations):
-			return self.animations[self.current_animation_index].passenger
-		else:
-			return False
-
-	def get_time(self):
-		if self.current_animation_index < len(self.animations):
-			return self.animations[self.current_animation_index].current_time
-		else:
-			return None
-
-class Animation:
-
-	def __init__(self, start_time_system, end_time_system, start_pos, end_pos, velocity, approx_frames, passenger):
-		self.start_time = start_time_system
-		self.end_time = end_time_system
-		self.current_time = start_time_system #in minutes
-		self.start = start_pos #tuple/np.array
-		self.end = end_pos #tuple/np.array
-		self.velocity = velocity #tuple/np.array
-		self.total_frames = approx_frames #float number of frames
-		self.frames_covered = 0
-		self.passenger = passenger #T/F
-
-	def reset(self):
-		self.frames_covered = 0
-		self.current_time = self.start_time
-
-	def update(self):
-		self.frames_covered += 1
-		if self.total_frames == 0.0001:
-			self.current_time = self.start_time
-		else:
-			self.current_time += (self.end_time - self.start_time)/self.total_frames
+    
+    sx, sy, ex, ey = 7, 8, 9, 10
+    st, et, vx, vy = 0, 1, 11, 12
+    is_move, has_pass, f = 4,5,13
+    
+    def __init__(self, movement_matrix):
+        self.movements = movement_matrix
+        self.center = np.array([movement_matrix[0][self.sx], movement_matrix[0][self.sy]])
+        self.prev_center = self.center
+        self.current_movement_index = 0
+        self.frame_count = 0
+        
+    def update(self):
+        self.prev_center = self.center
+        if self.current_movement_index < self.movements.shape[0]:
+            m = self.movements[self.current_movement_index]
+            if self.frame_count == 0:
+                self.center = np.array([m[self.sx], m[self.sy]])
+                self.frame_count += 1
+            elif self.frame_count > m[self.f]:
+                self.center = np.array([m[self.ex], m[self.ey]])
+                self.current_movement_index += 1
+                self.frame_count = 0
+            else:
+                self.center += np.array([m[self.vx], m[self.vy]])
+                self.frame_count += 1
+        return self.center, self.prev_center
+    
+    #0 for not moving
+    #1 for moving with passenger
+    #2 for moving without passenger
+    def state(self):
+        if self.current_movement_index >= self.movements.shape[0]:
+            return 0
+        else:
+            m = self.movements[self.current_movement_index]
+            if m[self.has_pass]:
+                return 1
+            elif m[self.is_move]:
+                return 2
+            else:
+                return 0
+    
+    def get_time(self):
+        if self.current_movement_index >= self.movements.shape[0]:
+            return None
+        else:
+            m = self.movements[self.current_movement_index]
+            return m[self.st] + (m[self.st] - m[self.et])/m[self.f] * self.frame_count
 
 def add_polygons(lists, poly_list, region_id):
     
@@ -110,9 +95,11 @@ def convert_coords(polygon_coords, left, top, total_dim, bbox_dim = SCREEN_SIZE)
 
     p = np.array(polygon_coords[0])
     merc = merc_from_arrays(p[:,1], p[:,0])
-    
-    return np.c_[np.floor(bbox_dim[0] * np.abs(merc[:,0] - left) / total_dim[0]), 
-                 np.floor(bbox_dim[1] * np.abs(top - merc[:,1]) / total_dim[1])], polygon_coords[1]
+
+    bbox_coords = np.c_[np.floor(bbox_dim[0] * np.abs(merc[:,0] - left) / total_dim[0]), 
+                  	np.floor(bbox_dim[1] * np.abs(top - merc[:,1]) / total_dim[1])]
+
+    return bbox_coords, polygon_coords[1]
 
 def extract_zones_as_polygons(taxi_zone_information):
 	#extract all the coordinate points first (taking into account weird shapes)
@@ -146,68 +133,19 @@ def extract_zones_as_polygons(taxi_zone_information):
 def convert_polygons_for_sampling(xy_pixel_polygons):
 	#store polygons as a dictionary of zone_id:polygon for faster sampling
 	zone_polygon_dict = {}
-	for coord_list, zone_id in xy_pixel_polygons:
+	for coord_list, zone_id in tqdm(xy_pixel_polygons, position = 0, leave = True, desc = 'Zone Polygons Processed'):
+		poly_info = (coord_list, Polygon(coord_list).area)
 		if zone_id not in zone_polygon_dict:
-			zone_polygon_dict[zone_id] = [Polygon(coord_list)]
+			zone_polygon_dict[zone_id] = [poly_info]
 		else:
-			zone_polygon_dict[zone_id].append(Polygon(coord_list))
+			zone_polygon_dict[zone_id].append(poly_info)
+	
+	for zone in tqdm(zone_polygon_dict, position = 0, leave = True, desc = 'Best Polygons Chosen'):
+		#only use the polygon with the most area
+		best_polygon = max(zone_polygon_dict[zone], key = lambda p: p[1])
+		zone_polygon_dict[zone] = Path(best_polygon[0])
+
 	return zone_polygon_dict
-
-def extract_animations(dm, starting_position, polygon_dict, scaling = SPEED_OF_SIM, fps = FPS):
-    current_position = random_point_within(starting_position[1], polygon_dict)
-    current_time = starting_position[0]
-    animation_list = []
-
-    #dm alternates between (start of movement to location) (end of movement to location)
-    #cut the list into (departures) (arrivals) and iterate
-    for i in range(0,len(dm) // 2,2):
-    	d = dm[i]
-    	a = dm[i + 1]
-    	start_pos = current_position
-    	end_pos = random_point_within(a[1], polygon_dict)
-    	v, f = calc_velocity(current_position, current_position, current_time, d[0])
-    	animation_list.append(Animation(current_time, d[0], current_position, current_position, v, f, False))
-    	v, f = calc_velocity(start_pos, end_pos, d[0], a[0])
-    	animation_list.append(Animation(d[0], a[0], start_pos, end_pos, v, f, d[-1] is not None))
-    	current_position = end_pos
-    	current_time = a[0]
-
-    return animation_list
-
-#return a random point within the zone given a polygon dictionary
-def random_point_within(zone_id, polygon_dict):
-
-	#first choose a random polygon from the ones with the matching zone id
-	poly = polygon_dict[zone_id][np.random.randint(len(polygon_dict[zone_id]))]
-
-	#then select a random point using acceptance/rejection sampling
-	min_x, min_y, max_x, max_y = poly.bounds
-
-	num_tries = 30
-
-	xs = np.random.uniform(min_x, max_x, num_tries)
-	ys = np.random.uniform(min_y, max_y, num_tries)
-
-	for i in range(num_tries):
-		p = [xs[i], ys[i]]
-		random_point = Point(p)
-		if (random_point.within(poly)):
-			return np.floor(np.array(p))
-
-	return np.floor(np.array([min_x, min_y]))
-		
-
-#returns the velocity vector and how many frames it should go for
-def calc_velocity(start_pos, end_pos, stime, etime, scaling = SPEED_OF_SIM, fps = FPS):
-
-	frames = (etime - stime) / scaling * fps
-
-	if frames == 0:
-		frames = 0.0001
-
-	velocity = 1/frames * (end_pos - start_pos)
-
-	return velocity, frames
 
 def draw_bg(poly_list, s):
 	for p in poly_list:
@@ -236,40 +174,129 @@ else:
 	zone_dict = polygon_info[1]
 
 #load some provided driver movement data
-drivers = load(DRIVER_MOVEMENT_FILENAME)
+driver_history = pd.read_parquet(DRIVER_MOVEMENT_FILENAME).reset_index(drop = True)
 
-#start with just the first driver movement
+if not os.path.exists(f'../{FOLDER}/driver_generated_points'):
 
-"""to convert movement data into an animation, maybe make a dot that moves across the screen?
-   if it's at 60 fps, then gotta determine the vector + speed of movement from point a to b
-   also need some rate to speed up how fast things are going
+	extent_dict = {k:(v.get_extents().min, v.get_extents().max) for k,v in zone_dict.items()}
 
-   direction = scaling / fps * (time end - time start) * [x end - x start, y end - y start]
-"""
+	def generate_points(zone_id, num_required, zone_dict = zone_dict, extent_dict = extent_dict):
+	    bounds = extent_dict[zone_id]
+	    path = zone_dict[zone_id]
+	    generated_points = np.array([])
+	    while len(generated_points) < num_required:
+	        xs = np.random.uniform(bounds[0][0], bounds[1][0], size = num_required)
+	        ys = np.random.uniform(bounds[0][1], bounds[1][1], size = num_required)
+	        points = np.c_[xs,ys]
+	        if len(generated_points) == 0:
+	            generated_points = points
+	        else:
+	            generated_points = np.append(generated_points, points, axis = 0)
+	    return generated_points[:num_required].round(2)
 
-import time
+	#get the # of points needed to be generated for each zone
+	#the zones that need (x,y) generation are the end zones after trips where the driver moves
+	#and the beginning position of each driver
+	need_positions_generated = driver_history[(driver_history.start_time == 0) | (driver_history.is_moving)]
+	points_required = need_positions_generated.groupby('end_zone').start_time.count()
 
-def driver_to_animation(driver, z = zone_dict):
-	m = driver.movement_history
-	start_pos = m[0]
-	movements = m[1:]
-	animations = extract_animations(movements, start_pos, zone_dict)
-	return DriverAnimation(animations)
+	g = []
+	for i in tqdm(points_required.index, 
+		position = 0, 
+		leave = True, 
+		desc = 'Points Generated per Zone'):
+	    positions_generated = generate_points(i, points_required.loc[i])
+	    pos_df = pd.DataFrame(positions_generated, columns = ['x','y'])
+	    pos_df['end_zone'] = i
+	    g.append(pos_df)
+	g = pd.concat(g)
 
-driver_animations = [driver_to_animation(d) for d in tqdm(drivers, position = 0, leave = True)]
+	position_dfs = []
+	for group in tqdm(need_positions_generated.groupby(['end_zone']), 
+		position = 0, 
+		leave = True, 
+		desc = 'Points Matched per Zone'):
+	    ind = group[1].index
+	    zone = group[1].end_zone.iloc[0]
+	    
+	    #create a new dataframe with the index and corresponding values from generated points
+	    position_df = pd.DataFrame(g[g.end_zone == zone][['x','y']].values, index = ind, columns = ['x','y'])
+	    position_dfs.append(position_df)
+	position_dfs = pd.concat(position_dfs).sort_index()
+
+	#set the original dataframe's columns
+	driver_history[['end_x','end_y']] = position_dfs
+
+	#assuming the end zones are alternating NaN and non-null values
+	#for every zone but the first set the null values to the non-null value above it
+
+	start_end_dfs = []
+	#the start x,y equals the end x,y but shifted up 1 (except for the first, which is the same as the end)
+	for did, group in tqdm(driver_history.groupby('driver_id'), 
+		position = 0, 
+		leave = True, 
+		desc = 'Driver Positions Processed'):
+	    first_move_end = group.iloc[0][['end_x','end_y']].values
+	    next_moves_end = group.iloc[1:][['end_x','end_y']].values
+	    next_moves_end[1::2] = next_moves_end[:-1:2]
+	    end_moves = np.r_[[first_move_end], next_moves_end]
+	    start_moves = np.r_[[first_move_end],end_moves[:-1]]
+	    sedf = pd.DataFrame(np.c_[start_moves, end_moves], 
+	                        index = group.index, 
+	                        columns = ['startx','starty','endx','endy'])
+	    start_end_dfs.append(sedf)
+	start_end_dfs = pd.concat(start_end_dfs)
+
+	driver_history[['startx','starty','endx','endy']] = start_end_dfs
+	driver_history.drop(columns = ['end_x','end_y'],inplace = True)
+
+	driver_history.to_parquet(f'../{FOLDER}/driver_generated_points')
+
+driver_generated_points = pd.read_parquet(f'../{FOLDER}/driver_generated_points')
+
+#generate velocity and frame information
+def vf(df, st, et, sx, sy, ex, ey, scaling=SPEED_OF_SIM, fps=FPS):
+	frames = (df[et] - df[st]) / scaling * fps
+	frames[frames == 0] = 0.0001
+	frames = frames.values
+	direction = (df[[ex, ey]].values - df[[sx, sy]].values).astype('float')
+	velocity = (1/frames * direction.T).T
+	return velocity, frames
+
+v, f = vf(driver_generated_points, 'start_time', 'end_time', 'startx','starty','endx','endy')
+driver_generated_points[['vx','vy']] = v
+driver_generated_points['frames'] = f
+
+driver_animations = []
+#for each driver, build a DriverAnimation object
+for did in tqdm(driver_generated_points.driver_id.unique(),
+	position = 0,
+	leave = True,
+	desc = 'Driver Animation Objects Created'):
+	matrix = driver_generated_points[driver_generated_points.driver_id == did].values
+	new_driver_animation = DriverAnimation(matrix)
+	driver_animations.append(new_driver_animation)
+
 
 #initalize screen and stuff
 pygame.init()
 size = width, height = SCREEN_SIZE
+screen = pygame.display.set_mode(size)
 
 driver_with_passenger = pygame.image.load('passenger.png')
-driver_with_passenger = pygame.transform.scale(driver_with_passenger, (2,2))
+driver_with_passenger = pygame.transform.scale(driver_with_passenger, (3,3))
 
 driver_without_passenger = pygame.image.load('nopassenger.png')
 driver_without_passenger = pygame.transform.scale(driver_without_passenger, (3,3))
+
+driver_idle = pygame.image.load('idle.png')
+driver_idle = pygame.transform.scale(driver_idle, (3,3))
+
 driver_rectangles = [driver_without_passenger.get_rect() for i in range(len(driver_animations))]
 
-screen = pygame.display.set_mode(size)
+layer1 = pygame.Surface(SCREEN_SIZE)
+layer1.fill([225,225,225])
+draw_bg(xy_pixel_polygons, layer1)
 
 clock = pygame.time.Clock()
 sys_time = 0
@@ -283,20 +310,20 @@ while True:
 			pygame.quit()
 			quit()
 
-	#showing animations
-	screen.fill([160, 160, 160])
-	draw_bg(xy_pixel_polygons, screen)
+	screen.blit(layer1, (0,0))
 
 	#animation handling
 	for driver, rect in zip(driver_animations, driver_rectangles):
-		rect.center = driver.update()
+		rect.center, trail_center = driver.update()
 		animation_time = driver.get_time()
 		if animation_time is not None and animation_time >= sys_time:
 			sys_time = animation_time
-		if driver.has_passenger():
+		if driver.state() == 1:
 			screen.blit(driver_with_passenger, rect)
-		else:
+		elif driver.state() == 2:
 			screen.blit(driver_without_passenger, rect)
+		else:
+			screen.blit(driver_idle, rect)
 
 	hour_font = font.render('Hour:{0:02}'.format(round(sys_time // 60)), 1, (0,0,0))
 	minute_font = font.render('Minute:{0:02}'.format(round(sys_time % 60)), 1, (0,0,0))
