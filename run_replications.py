@@ -51,6 +51,8 @@ def generate_arrivals_per_zone(zone_hourly_arrivals = hourly_arrival_rate,
         #rate = max_rate / 60 minutes (since max_rate is in minutes)
         #input the inverse as the mean interarrival time (scale parameter for np.random.exponential)
         temp_interarrivals = np.random.exponential(scale = 60/max_rate, size = 25000)
+        while temp_interarrivals.cumsum().max() <= 24 * 60:
+            temp_interarrivals = np.append(temp_interarrivals, np.random.exponential(scale = 60/max_rate, size = 25000))
         
         #this cuts off interarrivals at 1 day
         interarrivals = temp_interarrivals[temp_interarrivals.cumsum() <= 24*60]
