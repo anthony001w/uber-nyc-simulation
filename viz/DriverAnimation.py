@@ -27,6 +27,7 @@ class DriverAnimation:
         self.positions = self.movement_df.loc[self.animation_indices][['startx', 'starty']].values
         self.updated_frames = np.zeros(len(self.animation_indices))
         self.driver_count = len(self.updated_frames)
+        self.finished_animation = np.zeros(self.driver_count, dtype = bool)
 
     def update(self):
 
@@ -37,7 +38,8 @@ class DriverAnimation:
 
         self.updated_frames = self.updated_frames * stay_on_current
         self.animation_indices = self.animation_indices + ~stay_on_current
-        finished_animation = (self.animation_indices > self.last_indices).reshape((self.driver_count, 1))
+        self.finished_animation = self.finished_animation | (self.animation_indices > self.last_indices)
+        fanimation = self.finished_animation.reshape((self.driver_count, 1))
         self.animation_indices = np.minimum(self.animation_indices, self.last_indices)
 
         stay_on_current = stay_on_current.reshape((self.driver_count, 1))
@@ -47,13 +49,17 @@ class DriverAnimation:
 
         #set initial positions for the new animations
         new_pos = next_animations[['startx','starty']].values * ~stay_on_current
+
+        #last positions
+        last_pos = next_animations[['endx','endy']].values * fanimation
+
         #add the position vectors for the old animations
         velocity = next_animations[['vx','vy']].values * stay_on_current
         
-        self.positions = (self.positions * (stay_on_current | finished_animation)) + (new_pos + velocity) * ~finished_animation
+        self.positions = (self.positions * stay_on_current) + (new_pos + velocity) * ~fanimation + last_pos * fanimation
 
         self.updated_frames += 1
 
         #should return the positions, whether or not the driver has passenger/is moving, and the time
 
-        return self.positions, next_animations['is_moving'], next_animations['has_passenger'], next_animations.start_time.max()
+        return self.positions, next_animations['is_moving'], next_animations['has_passenger'], self.finished_animation, next_animations.start_time.max()

@@ -70,10 +70,12 @@ while True:
 
 	screen.blit(layer1, (0,0))
 	"""Updates the position of each driver according to the current animation"""
-	centers, is_moving, has_pass, curr_time = driver_animations.update()
-	for c, i, h, rect in zip(centers, is_moving, has_pass, driver_rectangles):
+	centers, is_moving, has_pass, finished, curr_time = driver_animations.update()
+	for c, i, h, f, rect in zip(centers, is_moving, has_pass, finished, driver_rectangles):
 		rect.center = c
-		if h:
+		if f:
+			screen.blit(driver_idle, rect)
+		elif h:
 			screen.blit(driver_with_passenger, rect)
 		elif i:
 			screen.blit(driver_without_passenger, rect)
