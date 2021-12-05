@@ -11,20 +11,22 @@ from generate_positions import *
 
 #changing the screen size argument messes with everything don't do it
 SCREEN_SIZE = (1200,800)
-if len(sys.argv) == 4:
+if len(sys.argv) == 5:
 	FPS = int(sys.argv[1])
 	SPEED_OF_SIM = int(sys.argv[2])
 	FOLDER = sys.argv[3]
+	MODE = sys.argv[4]
 else:
-	FPS = 60
-	SPEED_OF_SIM = 15
 	FOLDER = input('Enter test folder name:')
+	FPS = int(input('Enter FPS: '))
+	SPEED_OF_SIM = int(input('Enter the speed of the simulation: '))
+	MODE = input('Mode (random/lines): ')
 
 DRIVER_MOVEMENT_FILENAME = f'../{FOLDER}/driver_histories_parquet'
 
 xy_pixel_polygons, zone_dict = create_or_load_polygon_info()
 
-driver_generated_points = generate_positions(DRIVER_MOVEMENT_FILENAME, zone_dict, FOLDER)
+driver_generated_points = generate_positions(DRIVER_MOVEMENT_FILENAME, zone_dict, FOLDER, mode = MODE)
 
 driver_animations = DriverAnimation(driver_generated_points, SPEED_OF_SIM, FPS)
 

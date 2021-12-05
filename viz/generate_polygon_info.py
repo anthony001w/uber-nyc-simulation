@@ -91,7 +91,7 @@ def convert_polygons_for_sampling(xy_pixel_polygons):
 
 def create_or_load_polygon_info(file_name = 'polygon_info'):
 	#polygon data only needs to be created once
-	if not os.path.exists('polygon_info'):
+	if not os.path.exists(file_name):
 		with Socrata('data.cityofnewyork.us', 'vA3MfkSw5kKhpzNkitJkv5yFP') as client:
 			#gets the taxi zones (the geometry of each zone in the city + the zone name and borough)
 			taxi_zones =  pd.DataFrame.from_records(client.get('755u-8jsi'))
@@ -99,9 +99,9 @@ def create_or_load_polygon_info(file_name = 'polygon_info'):
 		xy_pixel_polygons = extract_zones_as_polygons(taxi_zones)
 		zone_dict = convert_polygons_for_sampling(xy_pixel_polygons)
 
-		dump([xy_pixel_polygons, zone_dict], 'polygon_info')
+		dump([xy_pixel_polygons, zone_dict], file_name)
 
 		return xy_pixel_polygons, zone_dict
 	else:
-		polygon_info = load('polygon_info')
+		polygon_info = load(file_name)
 		return polygon_info[0], polygon_info[1]

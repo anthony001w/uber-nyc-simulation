@@ -4,7 +4,7 @@ from matplotlib.path import Path
 import os
 from tqdm import tqdm
 
-def generate_points(zone_id, num_required, zone_dict, extent_dict):
+def generate_points_random(zone_id, num_required, zone_dict, extent_dict):
 	bounds = extent_dict[zone_id]
 	path = zone_dict[zone_id]
 	generated_points = np.array([])
@@ -19,18 +19,24 @@ def generate_points(zone_id, num_required, zone_dict, extent_dict):
 			generated_points = np.append(generated_points, points_filtered, axis = 0)
 	return generated_points[:num_required].round()
 
-	# following code can be used to create basic lines from zone to zone for dots to follow instead of random points
-	# more complicated code can group together zones to create more meaningful lines to follow
-	# v = path.vertices[0]
-	# return v * np.ones((num_required,2))
+def generate_points_lines(zone_id, num_required, zone_dict, extent_dict):
+    path = zone_dict[zone_id]
+    v = path.vertices[0]
+    return v * np.ones((num_required, 2))
 
-def generate_positions(driver_movement_filenames, zone_dict, folder):
+def generate_positions(driver_movement_filenames, zone_dict, folder, mode = 'random'):
+
+    filepath = f'../{folder}/driver_generated_points_{mode}'
 
     #load some provided driver movement data
     driver_history = pd.read_parquet(driver_movement_filenames).reset_index(drop = True)
     extent_dict = {k:(v.get_extents().min, v.get_extents().max) for k,v in zone_dict.items()}
+    if mode == 'random':
+        point_generation_function = generate_points_random
+    elif mode == 'lines':
+        point_generation_function = generate_points_lines
 
-    if not os.path.exists(f'../{folder}/driver_generated_points'):
+    if not os.path.exists(filepath):
 
         """get the # of points needed to be generated for each zone
         the zones that need (x,y) generation are the end zones after trips where the driver moves
@@ -45,7 +51,7 @@ def generate_positions(driver_movement_filenames, zone_dict, folder):
             position = 0, 
             leave = True, 
             desc = 'Points Generated per Zone'):
-            positions_generated = generate_points(i, points_required.loc[i], zone_dict = zone_dict, extent_dict=extent_dict)
+            positions_generated = point_generation_function(i, points_required.loc[i], zone_dict = zone_dict, extent_dict=extent_dict)
             pos_df = pd.DataFrame(positions_generated, columns = ['x','y'])
             pos_df['end_zone'] = i
             positions.append(pos_df)
@@ -89,8 +95,8 @@ def generate_positions(driver_movement_filenames, zone_dict, folder):
 
         driver_history[['startx','starty','endx','endy']] = start_end_dfs
         driver_history.drop(columns = ['end_x','end_y'],inplace = True)
-        driver_history.to_parquet(f'../{folder}/driver_generated_points')
+        driver_history.to_parquet(filepath)
 
         return driver_history
     else:
-        return pd.read_parquet(f'../{folder}/driver_generated_points')
+        return pd.read_parquet(filepath)

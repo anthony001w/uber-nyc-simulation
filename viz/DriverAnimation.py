@@ -23,6 +23,7 @@ class DriverAnimation:
 
         #immediately calculate initial positions, set the indices
         self.animation_indices = self.movement_df.groupby('driver_id').apply(lambda g: g.index[0]).values
+        self.last_indices = self.movement_df.groupby('driver_id').apply(lambda g: g.index[-1]).values
         self.positions = self.movement_df.loc[self.animation_indices][['startx', 'starty']].values
         self.updated_frames = np.zeros(len(self.animation_indices))
         self.driver_count = len(self.updated_frames)
@@ -36,6 +37,8 @@ class DriverAnimation:
 
         self.updated_frames = self.updated_frames * stay_on_current
         self.animation_indices = self.animation_indices + ~stay_on_current
+        finished_animation = (self.animation_indices > self.last_indices).reshape((self.driver_count, 1))
+        self.animation_indices = np.minimum(self.animation_indices, self.last_indices)
 
         stay_on_current = stay_on_current.reshape((self.driver_count, 1))
         
@@ -47,7 +50,7 @@ class DriverAnimation:
         #add the position vectors for the old animations
         velocity = next_animations[['vx','vy']].values * stay_on_current
         
-        self.positions = (self.positions * stay_on_current) + new_pos + velocity
+        self.positions = (self.positions * (stay_on_current | finished_animation)) + (new_pos + velocity) * ~finished_animation
 
         self.updated_frames += 1
 
