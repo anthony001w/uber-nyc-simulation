@@ -1,52 +1,56 @@
+import numpy as np
+import pandas as pd
+
+def vf(df, st, et, sx, sy, ex, ey, scaling, fps):
+	frames = (df[et] - df[st]) / scaling * fps
+	frames[frames == 0] = 0.0001
+	frames = frames.values
+	direction = (df[[ex, ey]].values - df[[sx, sy]].values).astype('float')
+	velocity = (1/frames * direction.T).T
+	return velocity, frames
+
 class DriverAnimation:
-    
-    sx, sy, ex, ey = 7, 8, 9, 10
-    st, et, vx, vy = 0, 1, 11, 12
-    is_move, has_pass, f = 4,5,13
-    
-    def __init__(self, movement_matrix):
-        self.movements = movement_matrix
-        self.current_movement_index = 0
 
-        self.move, self.hpass = False, False
+    def __init__(self, position_df, SCALING, FPS):
 
-        self.center = movement_matrix[0][self.sx], movement_matrix[0][self.sy]
-        self.prev_center = self.center
+        self.movement_df = position_df
+        self.scaling = SCALING
+        self.fps = FPS
 
-        self.frame_count = 0
+        vs, fs = vf(self.movement_df, 'start_time', 'end_time', 'startx','starty','endx','endy',self.scaling, self.fps)
+        self.movement_df[['vx','vy']] = vs
+        self.movement_df['frames'] = fs
 
-        self.time = 0
-        
+        #immediately calculate initial positions, set the indices
+        self.animation_indices = self.movement_df.groupby('driver_id').apply(lambda g: g.index[0]).values
+        self.positions = self.movement_df.loc[self.animation_indices][['startx', 'starty']].values
+        self.updated_frames = np.zeros(len(self.animation_indices))
+        self.driver_count = len(self.updated_frames)
+
     def update(self):
-        self.prev_center = self.center
-        if self.current_movement_index < self.movements.shape[0]:
-            m = self.movements[self.current_movement_index]
-            if self.frame_count == 0:
-                self.time = m[self.st]
-                self.center = m[self.sx], m[self.sy]
-                self.frame_count += 1
-                self.move = m[self.is_move]
-                self.hpass = m[self.has_pass]
-            elif self.frame_count > m[self.f]:
-                self.time = m[self.et]
-                self.center = m[self.ex], m[self.ey]
-                self.current_movement_index += 1
-                self.frame_count = 0
-            else:
-                self.center = self.center[0] + m[self.vx], self.center[1] + m[self.vy]
-                self.frame_count += 1
-        return self.center
-    
-    #0 for not moving
-    #1 for moving with passenger
-    #2 for moving without passenger
-    def state(self):
-        if self.current_movement_index >= self.movements.shape[0]:
-            return 0
-        else:
-            if self.hpass:
-                return 1
-            elif self.move:
-                return 2
-            else:
-                return 0
+
+        #updating takes a few steps
+        #need to check whether the frame count surpasses the total frames, if it does then reset
+        curr_animations = self.movement_df.loc[self.animation_indices]
+        stay_on_current = self.updated_frames <= curr_animations['frames'].values
+
+        self.updated_frames = self.updated_frames * stay_on_current
+        self.animation_indices = self.animation_indices + ~stay_on_current
+
+        stay_on_current = stay_on_current.reshape((self.driver_count, 1))
+        
+        #grab next animations
+        next_animations = self.movement_df.loc[self.animation_indices]
+
+        #set initial positions for the new animations
+        new_pos = next_animations[['startx','starty']].values * ~stay_on_current
+        #add the position vectors for the old animations
+        velocity = next_animations[['vx','vy']].values * stay_on_current
+        
+        self.positions = (self.positions * stay_on_current) + new_pos + velocity
+
+        self.updated_frames += 1
+
+        #should return the positions, whether or not the driver has passenger/is moving, and the time
+
+        return self.positions, next_animations['is_moving'], next_animations['has_passenger'], next_animations.start_time.max()

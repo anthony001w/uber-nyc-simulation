@@ -20,41 +20,13 @@ else:
 	SPEED_OF_SIM = 15
 	FOLDER = input('Enter test folder name:')
 
-#generate velocity and frame information
-def vf(df, st, et, sx, sy, ex, ey, scaling = SPEED_OF_SIM, fps = FPS):
-	frames = (df[et] - df[st]) / scaling * fps
-	frames[frames == 0] = 0.0001
-	frames = frames.values
-	direction = (df[[ex, ey]].values - df[[sx, sy]].values).astype('float')
-	velocity = (1/frames * direction.T).T
-	return velocity, frames
-
-#modify and create driver animation objects
-def generate_animation_objects(driver_generated_points):
-	#calculating velocity and frames for each movement
-	v, f = vf(driver_generated_points, 'start_time', 'end_time', 'startx','starty','endx','endy')
-	driver_generated_points[['vx','vy']] = v
-	driver_generated_points['frames'] = f
-
-	driver_animations = []
-	#for each driver, build a DriverAnimation object
-	for did in tqdm(driver_generated_points.driver_id.unique(),
-		position = 0,
-		leave = True,
-		desc = 'Driver Animation Objects Created'):
-		matrix = driver_generated_points[driver_generated_points.driver_id == did].values
-		new_driver_animation = DriverAnimation(matrix)
-		driver_animations.append(new_driver_animation)
-
-	return driver_animations
-
 DRIVER_MOVEMENT_FILENAME = f'../{FOLDER}/driver_histories_parquet'
 
 xy_pixel_polygons, zone_dict = create_or_load_polygon_info()
 
 driver_generated_points = generate_positions(DRIVER_MOVEMENT_FILENAME, zone_dict, FOLDER)
 
-driver_animations = generate_animation_objects(driver_generated_points)
+driver_animations = DriverAnimation(driver_generated_points, SPEED_OF_SIM, FPS)
 
 """Draws the backround of the pygame set"""
 def draw_bg(poly_list, s):
@@ -77,7 +49,7 @@ driver_with_passenger = load_image('passenger.png')
 driver_without_passenger = load_image('nopassenger.png')
 driver_idle = load_image('idle.png')
 
-driver_rectangles = [driver_without_passenger.get_rect() for i in range(len(driver_animations))]
+driver_rectangles = [driver_without_passenger.get_rect() for i in range(driver_animations.driver_count)]
 
 """Bottom Layer with all the city boundaries drawn on"""
 layer1 = pygame.Surface(SCREEN_SIZE)
@@ -85,7 +57,6 @@ layer1.fill([225,225,225])
 draw_bg(xy_pixel_polygons, layer1)
 
 clock = pygame.time.Clock()
-sys_time = 0
 font = pygame.font.SysFont('Trebuchet MS', 20)
 while True:
 	clock.tick(FPS)
@@ -97,19 +68,18 @@ while True:
 
 	screen.blit(layer1, (0,0))
 	"""Updates the position of each driver according to the current animation"""
-	for driver, rect in zip(driver_animations, driver_rectangles):
-		rect.center = driver.update()
-		if driver.time > sys_time:
-			sys_time = driver.time
-		if driver.state() == 1:
+	centers, is_moving, has_pass, curr_time = driver_animations.update()
+	for c, i, h, rect in zip(centers, is_moving, has_pass, driver_rectangles):
+		rect.center = c
+		if h:
 			screen.blit(driver_with_passenger, rect)
-		elif driver.state() == 2:
+		elif i:
 			screen.blit(driver_without_passenger, rect)
 		else:
 			screen.blit(driver_idle, rect)
 
 	"""Display a system time counter"""
-	time_font = font.render('Time: {hour:02}:{minute:02}'.format(hour = round(sys_time//60), minute = round(sys_time%60)), 1, (0,0,0))
+	time_font = font.render('Time: {hour:02}:{minute:02}'.format(hour = round(curr_time//60), minute = round(curr_time%60)), 1, (0,0,0))
 	time_rect = time_font.get_rect()
 	time_rect.center = (60,40)
 	screen.blit(time_font, time_rect)
