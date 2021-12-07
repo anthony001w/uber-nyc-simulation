@@ -201,7 +201,7 @@ else:
     num_drivers = int(input('Enter number of drivers: '))
     output_file_name = input(('Enter output file name: '))
 
-dir_name = 'output_' + output_file_name
+dir_name = 'output/' + output_file_name
 if os.path.exists(dir_name):
     os.rmdir(dir_name)
 os.mkdir(dir_name)

@@ -1,6 +1,5 @@
 import pandas as pd
 import sys, pygame
-from tqdm import tqdm
 from city_elements import *
 from city import *
 from event_list import *
@@ -22,7 +21,7 @@ else:
 	SPEED_OF_SIM = int(input('Enter the speed of the simulation: '))
 	MODE = input('Mode (random/lines): ')
 
-DRIVER_MOVEMENT_FILENAME = f'../{FOLDER}/driver_histories_parquet'
+DRIVER_MOVEMENT_FILENAME = f'../output/{FOLDER}/driver_histories_parquet'
 
 xy_pixel_polygons, zone_dict = create_or_load_polygon_info()
 
