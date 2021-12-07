@@ -1,6 +1,5 @@
 from city_elements import *
 from event_list import *
-import pandas as pd
 import numpy as np
 import time
 
@@ -81,10 +80,10 @@ class City:
         pickup_zone = self.get_zone(event.passenger.start)
         dropoff_zone = self.get_zone(event.passenger.end)
         
-        #get best avaiable driver and check status
+        #get best available driver and check status
         chosen_driver = pickup_zone.get_available_driver()
         if chosen_driver is not None:
-            if chosen_driver.status() == 'Idle':
+            if not chosen_driver.is_moving():
                 #return a trip event
                 #update pickup zone drivers and dropoff zone drivers
                 #edit driver's passenger variable
@@ -128,7 +127,7 @@ class City:
             self.timed_stats['choose_driver'][1] += 1
             
             #using this chosen driver, check status
-            if chosen_driver.status() == 'Idle':
+            if not chosen_driver.is_moving():
                 #return a movement event
                 #update the zone's drivers and the passenger's pickup zone drivers
                 #update the driver's movement history

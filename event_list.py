@@ -1,6 +1,4 @@
 from city_elements import *
-import pandas as pd
-import numpy as np
 import time
 
 class Event:
@@ -17,6 +15,20 @@ class Arrival(Event):
         
     def __str__(self):
         return 'Arrival\n' + str(self.passenger)
+
+class DriverArrival(Event):
+    
+    def __init__(self, driver):
+        Event.__init__(self, driver.start)
+        self.driver = driver 
+        self.type = 'Driver Arrival'
+    
+class DriverDeparture(Event):
+    
+    def __init__(self, driver):
+        Event.__init__(self, driver.end)
+        self.driver = driver 
+        self.type = 'Driver Departure'
     
 class Movement(Event):
         
