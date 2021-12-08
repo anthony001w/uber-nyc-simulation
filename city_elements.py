@@ -1,11 +1,14 @@
 from collections import deque
 import pandas as pd
+import time
 
 class Driver:
     
     #can add behaviors here like time schedule, max distance allowed
     def __init__(self, start_zone, schedule_start, schedule_end):
         self.start, self.end = schedule_start, schedule_end
+        self.start_zone = start_zone
+        self.marked_for_departure = False
 
         self.last_location = start_zone
         self.last_time = 0
@@ -39,6 +42,12 @@ class Driver:
     def is_moving(self):
         return self.passenger is not None or len(self.passenger_queue) > 0
 
+    def out_of_schedule(self, system_time):
+        if self.start < self.end:
+            return system_time > self.end or system_time < self.start
+        elif self.start > self.end:
+            return system_time > self.end and system_time < self.start
+
     def return_movement_dataframe(self):
         return pd.DataFrame(self.movement_history, columns = ['start_time', 'end_time', 'start_zone', 'end_zone', 'is_moving', 'has_passenger'])
     
@@ -60,9 +69,9 @@ class Passenger:
 class Zone:
     
     #stores drivers
-    def __init__(self, zone_id, driver_set):
+    def __init__(self, zone_id):
         self.zone = zone_id
-        self.drivers = driver_set
+        self.drivers = set()
         
     def get_available_driver(self):
         if len(self.drivers) == 0:

@@ -8,8 +8,20 @@ class City:
     def __init__(self, name, zone_list, drivers, odmatrix):
         self.name = name
         self.zones = {z.zone: z for z in zone_list}
-        self.free_drivers = set(drivers)
+
+        self.inactive_drivers = set()
+        self.free_drivers = set()
         self.busy_drivers = set()
+        self.marked_for_departure_drivers = set()
+
+        #add available drivers to the set of free drivers based on end < start
+        for d in drivers:
+            if d.end < d.start:
+                self.free_drivers.add(d)
+                self.get_zone(d.start_zone).add_driver(d)
+            else:
+                self.inactive_drivers.add(d)
+
         self.odmatrix = []
 
         #convert odmatrix into a list of lists (faster access)
@@ -45,9 +57,12 @@ class City:
         self.default_times = default_means
 
         self.timed_stats = {'generating_movement_times':[0,0],
-                            'choose_driver':[0,0]}
+                            'choose_driver':[0,0],
+                            'checking_driver_end':[0,0]}
         
     def get_zone(self, zone_id):
+        if zone_id not in self.zones:
+            return None
         return self.zones[zone_id]
 
     def process_event(self, event):
@@ -60,6 +75,12 @@ class City:
 
         elif event.type == 'Trip':
             return self.process_trip_event(event)
+
+        elif event.type == 'Driver Arrival':
+            return self.process_driver_arrival(event)
+
+        elif event.type == 'Driver Departure':
+            return self.process_driver_departure(event)
     
     def generate_movement_time(self, pu, do):
         
@@ -118,8 +139,9 @@ class City:
                     self.free_drivers.add(chosen_driver)
                     zone = self.get_zone(chosen_driver.last_location)
 
-            #last case scenario if no driver is available, just choose any driver
+            #last case scenario if no free driver is available
             if chosen_driver is None:
+                #choose any busy driver
                 chosen_driver = self.busy_drivers.pop()
                 self.busy_drivers.add(chosen_driver)
             toc = time.time()
@@ -138,7 +160,8 @@ class City:
                 chosen_driver.add_start_of_movement(event.time, zone.zone)
                 chosen_driver.add_passenger(event.passenger)
                 #generate a movement time from zone to zone
-                return Movement(event.time, chosen_driver, pickup_zone, self.generate_movement_time(zone.zone, pickup_zone.zone))
+                movement_time = self.generate_movement_time(zone.zone, pickup_zone.zone)
+                return Movement(event.time, chosen_driver, pickup_zone, movement_time)
             
             else:
                 #add the passenger to the driver's queue
@@ -155,7 +178,6 @@ class City:
         driver = event.driver
         passenger = driver.pop_next_passenger()
         
-        pickup_zone = event.end_zone
         dropoff_zone = self.get_zone(passenger.end)
         
         driver.add_end_of_movement(event.time, event.end_zone.zone)
@@ -179,7 +201,21 @@ class City:
         if passenger is None:
             event.end_zone.add_driver(driver)
             self.free_drivers.add(driver)
-            self.busy_drivers.remove(driver)
+            if driver in self.marked_for_departure_drivers:
+                self.marked_for_departure_drivers.remove(driver)
+            else:
+                self.busy_drivers.remove(driver)
+            #also need to check if a departure event should be generated
+            #this check only happens if the driver is currently active
+            #need to check if the event time is greater than the end and less than the start
+            #OR if the event time is greater than the end AND greater than the start
+            tic = time.time()
+            if driver.out_of_schedule(event.time):
+                driver_dep_event = DriverDeparture(driver, event.time)
+                toc = time.time()
+                self.timed_stats['checking_driver_end'][0] += toc - tic
+                self.timed_stats['checking_driver_end'][1] += 1
+                return driver_dep_event
         else:
             #2 cases, either the passenger is in the zone (generating a trip event)
             #or the passenger is in another zone (generating a movement event to that zone)
@@ -202,7 +238,31 @@ class City:
                 zone = self.get_zone(passenger.start)
                 driver.add_start_of_movement(event.time, current_passenger.end)
 
-                return Movement(event.time, driver, zone, self.generate_movement_time(event.end_zone.zone, zone.zone))
+                movement_time = self.generate_movement_time(event.end_zone.zone, zone.zone)
+
+                return Movement(event.time, driver, zone, movement_time)
+
+    def process_driver_arrival(self, event):
+        #add the driver to the free driver pool
+        #add the driver to the zone he starts in
+        #remove from inactive driver list
+        event.driver.last_location = event.driver.start_zone
+        self.free_drivers.add(event.driver)
+        self.inactive_drivers.remove(event.driver)
+        self.get_zone(event.driver.start_zone).add_driver(event.driver)
+
+    def process_driver_departure(self, event):
+
+        #if the driver is busy, just do nothing and another departure event will be generated
+        if event.driver in self.free_drivers:
+            self.free_drivers.remove(event.driver)
+            self.inactive_drivers.add(event.driver)
+            self.get_zone(event.driver.last_location).remove_driver(event.driver)
+        elif event.driver in self.busy_drivers:
+            self.busy_drivers.remove(event.driver)
+            self.marked_for_departure_drivers.add(event.driver)
+        elif event.driver in self.marked_for_departure_drivers:
+            pass
 
     def formatted_stats(self):
         s = ''

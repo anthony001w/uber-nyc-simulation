@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-from joblib import dump, load
+from joblib import load
 from city_elements import *
 from city import *
 from event_list import *
@@ -27,6 +27,74 @@ pickup_data = pd.read_pickle('arrival_and_dropoff_distributions')
 hourly_arrival_rate =  pickup_data.apply(lambda item: item[0])
 dropoff_frequency  = pickup_data.apply(lambda  item: item[1] / item[1].sum())
 trip_time_data = pd.read_parquet('trip_time_means')
+
+def generate_bundle(size = 1000):
+    """Generates uniform centers of intervals (each interval represents a driver schedule
+       Generates intervals of lengths centered around 8 hours with min/max of 2/10
+    """
+    centers = np.random.randint(1440, size = size)
+
+    #weights 8 hour intervals higher than 2 hours or 10 hours
+    possible_lengths = np.arange(60, 301) * 2
+    length_pvalues = 1/(np.abs(480 - possible_lengths) + 15)
+    length_pvalues = length_pvalues / length_pvalues.sum()
+    lengths = np.random.choice(possible_lengths, size = size, p = length_pvalues)
+    lengths.sort()
+    #the sort is so that when we iteratively add them to the driver list we add the highest values first
+    return centers, lengths[::-1]
+
+def update_availability_arr(availability, bundle, preferred_availability, acceptable_overlap = 60, show_progress = False):
+    """Updates the available drivers using the bundle of given intervals"""
+    mins = bundle[0] - bundle[1] / 2
+    mins = np.where(mins >= 0, mins, 1440 + mins)
+    maxs = bundle[0] + bundle[1] / 2
+    maxs = np.where(maxs < 1440, maxs, maxs - 1440)
+    bounds = np.c_[mins, maxs].astype(int)
+
+    #transform bounds to np array (1440)
+    #and iteratively add if it's okay to add
+    updated_avail = availability
+    accepted_drivers = []
+    if show_progress:
+        iterable_shown = tqdm(range(len(bounds)), position = 0, leave = True, desc = 'Transforming bounds to arrays')
+    else:
+        iterable_shown = range(len(bounds))
+    for i in iterable_shown:
+        new_arr = np.zeros(1440)
+        s, e = bounds[i][0], bounds[i][1]
+        if e < s:
+            new_arr[s:] = 1
+            new_arr[:e] = 1
+        else:
+            new_arr[s:e] = 1
+        restricted = (preferred_availability - updated_avail <= 0).astype(int)
+        if (new_arr + restricted == 2).sum() <= acceptable_overlap:
+            accepted_drivers.append(i)
+            updated_avail += new_arr
+                        
+    #filter out the bounded_arr
+    diff = (updated_avail - preferred_availability)
+    return updated_avail, diff, bounds[accepted_drivers]
+
+def generate_driver_schedules(preferred_availability, 
+    tolerated_under_preferred = 3000, 
+    acceptable_overlap = 60, 
+    chunk_size = 100000,
+    show_progress = False):
+    """Given a few parameters, generate driver schedules until some acceptable threshold is met for the given
+       preferred availability function
+
+       preferred_availability = array(1440) that represents the # of preferred drivers at each minute of the day 
+    """
+    avail = np.zeros(1440)
+    avail, diff, schedules = update_availability_arr(avail, generate_bundle(chunk_size), preferred_availability, acceptable_overlap, show_progress)
+    print(f'Maximu Difference between # Drivers Available and Preferred Amount: {diff.min().round()}', end = ' ')
+    while diff.min() <= -tolerated_under_preferred:
+        avail, diff, s2 = update_availability_arr(avail, generate_bundle(chunk_size), preferred_availability, acceptable_overlap, show_progress)
+        print(diff.min().round(), end = ' ')
+        schedules = np.append(schedules, s2, axis = 0)
+    print()
+    return schedules
 
 def generate_arrivals_per_zone(zone_hourly_arrivals = hourly_arrival_rate, 
                                zone_dropoff_frequencies = dropoff_frequency, 
@@ -75,7 +143,7 @@ def generate_arrivals_per_zone(zone_hourly_arrivals = hourly_arrival_rate,
         #each arrival, generate a service time from the service time distributions
         #this is SLOW
         if len(arrival_df) > 0:
-            services = [np.clip(np.random.normal(loc = info[0], scale = info[1]), info[2], info[3]) 
+            services = [max(np.random.normal(loc = info[0], scale = info[1]), 0)
                         for info in zone_service_times.loc[arrival_df.dolocationid].values]
 
             arrival_df['service'] = services
@@ -90,56 +158,63 @@ def generate_arrivals_per_zone(zone_hourly_arrivals = hourly_arrival_rate,
     return zone_arrivals
 
 def simulate_with_individual_drivers(arrivals,
+                                    preferred_driver_availability,
                                      driver_distribution = 'proportional',
-                                     driver_count = 10000,
-                                     odmatrix = trip_time_data):
+                                     odmatrix = trip_time_data,
+                                     pickup_data = hourly_arrival_rate):
     #convert arrivals into passengers, and then into events
     passengers = []
     drivers = []
     
-    arrival_events = deque()
+    initial_events = deque()
     for a in tqdm(arrivals.values, position = 0, leave = True, desc = 'Passenger Objects Created'):
         p = Passenger(a[0], a[1], a[2], a[3])
         passengers.append(p)
-        arrival_events.append(Arrival(p))
-    
-    event_list = EventList(arrival_events)
+        initial_events.append(Arrival(p))
     
     #setup drivers and zones based on driver_distribution parameter
+    #setup driver schedules and insert driver arrivals and departures into the initial event list 
     #everything is under the city class
     if driver_distribution == 'proportional':
         
         zones = []
+
+        #generate driver schedules
+        dschedules = generate_driver_schedules(preferred_driver_availability)
+        driver_count = len(dschedules)
         
         pbar = tqdm(total = driver_count, position = 0, leave = True, desc = 'Driver Objects Created')
         #number of drivers per zone
-        dcounts = driver_count * (arrivals.groupby('pulocationid')['time'].count() / arrivals.shape[0])
+        #use the pickup data to do this
+        arrivals_per_zone = pickup_data.sum(axis=1)
+        dcounts = driver_count * (arrivals_per_zone / arrivals_per_zone.sum())
         dcounts = np.floor(dcounts)
         
+        driver_index = 0
         for i in range(1,264):
             if i in dcounts.index:
-                temp_set = set()
                 for j in range(int(dcounts.loc[i])):
-                    d = Driver(i)
-                    temp_set.add(d)
+                    d = Driver(i, dschedules[driver_index][0], dschedules[driver_index][1])
+                    #also want to add the driver departure and arrival to the initial event list
+                    initial_events.append(DriverArrival(d))
+                    initial_events.append(DriverDeparture(d))
                     drivers.append(d)
                     pbar.update(1)
-                zones.append(Zone(zone_id = i, driver_set = temp_set))
-            else:
-                zones.append(Zone(zone_id = i, driver_set = set()))
+                    driver_index += 1
+            zones.append(Zone(i))
         
         for i in range(driver_count - len(drivers)):
             z = np.random.choice(np.arange(1,264))
-            d = Driver(z)
+            d = Driver(z, dschedules[driver_index][0], dschedules[driver_index][1])
+            initial_events.append(DriverArrival(d))
+            initial_events.append(DriverDeparture(d))
             drivers.append(d)
-            
-            for zone in zones:
-                if zone.zone == z:
-                    zone.add_driver(d)
-                    pbar.update(1)
-                    break
+            pbar.update(1)
+            driver_index += 1
                     
         city = City('NYC', zones, drivers, odmatrix)
+
+    event_list = EventList(initial_events)
             
     #iterate through the event list until no events left
     pbar = tqdm(total = arrivals.shape[0], position = 0, leave = True, desc = 'Passengers Processed')
@@ -157,8 +232,8 @@ def simulate_with_individual_drivers(arrivals,
     return passengers, drivers, city, event_list
 
 def simulate_n_days(n,
-                    driver_distribution = 'proportional',
-                    driver_count = 15000):
+                    preferred_availability,
+                    driver_distribution = 'proportional'):
     #just keep 1 driver history bc it takes up too much memory
     #keep all the waiting time information in dataframes
     passenger_details = []
@@ -170,7 +245,7 @@ def simulate_n_days(n,
         arrivals = generate_arrivals_per_zone(show_progress_bar=True)
         p, d, c, e = simulate_with_individual_drivers(arrivals, 
                                                       driver_distribution = driver_distribution, 
-                                                      driver_count = driver_count)
+                                                      preferred_driver_availability=preferred_availability)
         waiting_times = np.array([(pe.time, pe.start, pe.end, pe.service, pe.waiting_time()) for pe in p])
         waiting_times = pd.DataFrame(waiting_times, columns = ['arrival_time','starting zone', 'ending zone','service_time','waiting_time'])
         waiting_times['arrival_hour'] = waiting_times.arrival_time//60
@@ -187,17 +262,14 @@ def simulate_n_days(n,
     
     return pd.concat(passenger_details), driver_history, city_history
 
-if len(sys.argv) == 4:
+if len(sys.argv) == 3:
     print(f'# replications: {sys.argv[1]}')
-    print(f'# drivers: {sys.argv[2]}')
-    print(f'output folder: {sys.argv[3]}')
+    print(f'output folder: {sys.argv[2]}')
     num_replications = int(sys.argv[1])
-    num_drivers = int(sys.argv[2])
     output_file_name = sys.argv[3]
 
 else:
     num_replications = int(input('Enter number of replications: '))
-    num_drivers = int(input('Enter number of drivers: '))
     output_file_name = input(('Enter output file name: '))
 
 dir_name = 'output/' + output_file_name
@@ -207,7 +279,10 @@ os.mkdir(dir_name)
 
 sys.stdout = Logger(f'{dir_name}/logfile.txt')
 
-passenger_details, dhistory, chistory = simulate_n_days(num_replications, driver_count = num_drivers)
+minimum_active_trips = load('minimum_active_uber_trips')
+preferred_driver_availability = minimum_active_trips['Driver Count'].values
+
+passenger_details, dhistory, chistory = simulate_n_days(num_replications, preferred_driver_availability)
 
 passenger_details.to_parquet(dir_name + '/passenger_parquet')
 

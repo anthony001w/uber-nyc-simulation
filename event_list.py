@@ -25,8 +25,9 @@ class DriverArrival(Event):
     
 class DriverDeparture(Event):
     
-    def __init__(self, driver):
-        Event.__init__(self, driver.end)
+    def __init__(self, driver, t = 0):
+        t = max(t, driver.end)
+        Event.__init__(self, t)
         self.driver = driver 
         self.type = 'Driver Departure'
     
@@ -46,7 +47,7 @@ class Movement(Event):
 class EventList:
     
     def __init__(self, initial_event_list):
-        self.events = initial_event_list
+        self.events = deque(sorted(initial_event_list, key = lambda e: e.time))
         self.timed_stats = {'insertion speed':[0,0], 
                             'pop speed':[0,0], 
                             'search speed':[0,0]}
