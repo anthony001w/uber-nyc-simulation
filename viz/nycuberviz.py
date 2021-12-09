@@ -1,10 +1,5 @@
-import pandas as pd
 import sys, pygame
-from city_elements import *
-from city import *
-from event_list import *
 from DriverAnimation import DriverAnimation
-from matplotlib.path import Path
 from generate_polygon_info import *
 from generate_positions import *
 

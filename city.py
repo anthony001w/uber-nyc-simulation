@@ -3,24 +3,86 @@ from event_list import *
 import numpy as np
 import time
 
+class ZoneDict:
+    """Representing every zone in a dictionary of sets with keys as the zone ids"""
+
+    def __init__(self, zone_ids):
+        self.zones = {z:set() for z in zone_ids}
+
+    def add_driver(self, zone_id, driver):
+        self.zones[zone_id].add(driver)
+    
+    def remove_driver(self, zone_id, driver):
+        self.zones[zone_id].remove(driver)
+
+    def get_driver(self, zone_id):
+        if len(self.zones[zone_id]) == 0:
+            return None
+        else:
+            d = self.zones[zone_id].pop()
+            self.zones[zone_id].add(d)
+            return d
+
+    def get_driver_from_any_zone(self, zones_to_check):
+        for z in zones_to_check:
+            driver = self.get_driver(z)
+            if driver:
+                return driver
+        return None
+    
+    def shift_driver(self, driver, old_zone, new_zone):
+        self.remove_driver(old_zone, driver)
+        self.add_driver(new_zone, driver)
+
+    def initialize(self, driver_list):
+        for d in driver_list:
+            if d.end < d.start:
+                self.add_driver(d.start_zone, d)
+                    
+    def get_driver_counts_in_system(self):
+        return {i:len(self.zones[i]) for i in self.zones}
+
+class DriverStatus:
+    """Representing driver statuses as a whole in a dictionary of sets where the names are the statuses"""
+    def __init__(self, priority_names):
+        self.status = {p:set() for p in priority_names}
+
+    def shift_driver(self, driver, old_status, new_status):
+        self.status[old_status].remove(driver)
+        self.status[new_status].add(driver)
+
+    def driver_in_status(self, driver, status):
+        return driver in self.status[status]
+
+    def get_driver_from_status(self, status):
+        if len(self.status[status]) == 0:
+            return None
+        else:
+            d = self.status[status].pop()
+            self.status[status].add(d)
+            return d
+
+    def add_driver(self, driver, status):
+        self.status[status].add(driver)
+
+    def get_status_counts(self):
+        return {s:len(self.status[s]) for s in self.status}
+
 class City:
     
-    def __init__(self, name, zone_list, drivers, odmatrix):
+    def __init__(self, name, zone_ids, drivers, odmatrix):
         self.name = name
-        self.zones = {z.zone: z for z in zone_list}
-
-        self.inactive_drivers = set()
-        self.free_drivers = set()
-        self.busy_drivers = set()
-        self.marked_for_departure_drivers = set()
+        self.zones = ZoneDict(zone_ids)
+        self.unserved_customers = deque()
+        self.driver_status = DriverStatus(['inactive','free','busy','max_queue','marked_for_departure'])
 
         #add available drivers to the set of free drivers based on end < start
         for d in drivers:
             if d.end < d.start:
-                self.free_drivers.add(d)
-                self.get_zone(d.start_zone).add_driver(d)
+                self.driver_status.add_driver(d, 'free')
             else:
-                self.inactive_drivers.add(d)
+                self.driver_status.add_driver(d, 'inactive')
+        self.zones.initialize(drivers)
 
         self.odmatrix = []
 
@@ -57,13 +119,7 @@ class City:
         self.default_times = default_means
 
         self.timed_stats = {'generating_movement_times':[0,0],
-                            'choose_driver':[0,0],
-                            'checking_driver_end':[0,0]}
-        
-    def get_zone(self, zone_id):
-        if zone_id not in self.zones:
-            return None
-        return self.zones[zone_id]
+                            'choose_driver':[0,0]}
 
     def process_event(self, event):
 
@@ -98,98 +154,85 @@ class City:
         return m
     
     def process_arrival_event(self, event):
-        pickup_zone = self.get_zone(event.passenger.start)
-        dropoff_zone = self.get_zone(event.passenger.end)
-        
-        #get best available driver and check status
-        chosen_driver = pickup_zone.get_available_driver()
-        if chosen_driver is not None:
-            if not chosen_driver.is_moving():
-                #return a trip event
-                #update pickup zone drivers and dropoff zone drivers
-                #edit driver's passenger variable
-                #update driver movement history
-                pickup_zone.remove_driver(chosen_driver)
-                chosen_driver.passenger = event.passenger
-                chosen_driver.add_start_of_movement(event.time, event.passenger.start)
-                self.free_drivers.remove(chosen_driver)
-                self.busy_drivers.add(chosen_driver)
-                return Movement(event.time, chosen_driver, dropoff_zone, event.passenger.service, event.passenger)
-            else:
-                #just add the passenger to the driver's queue
-                #return nothing
-                chosen_driver.add_passenger(event.passenger)
+        pickup_zone = event.passenger.start
+
+        #first search for a driver in the same pickup zone as the passenger
+        chosen_driver = self.zones.get_driver(pickup_zone)
+        if chosen_driver:
+            #if the driver is not moving, then the driver can immediately serve the passenger
+            #system changes - remove driver from the pickup zone and shift the driver's status
+            self.zones.remove_driver(pickup_zone, chosen_driver)
+            self.driver_status.shift_driver(chosen_driver, 'free', 'busy')
+
+            #add the passenger to the driver queue and send the driver to the same zone
+            chosen_driver.add_passenger(event.passenger)
+            chosen_driver.add_start_of_movement(event.time, pickup_zone)
+            movement_time = self.generate_movement_time(pickup_zone, pickup_zone)
+
+            #generate a movement event
+            return Movement(event.time + movement_time, chosen_driver, pickup_zone, pickup_zone)
         else:
-            
-            #pick another driver based on the closest zones
-            #if there's no free driver in the list of closest zones, pick a free driver out of the whole list
             chosen_driver = None
+            status_counts = self.driver_status.get_status_counts()
             
             tic = time.time()
-            #pick a random free driver
-            if len(self.free_drivers) > 0:
-                for zone_id in self.closest_zones[event.passenger.start]:
-                    zone = self.get_zone(zone_id)
-                    chosen_driver = zone.get_available_driver()
-                    if chosen_driver is not None:
-                        break
+            #choosing a driver
+            if status_counts['free'] > 0:
+                #only look at the 5 closest zones
+                some_close_zones = self.closest_zones[pickup_zone][:5]
+                chosen_driver = self.zones.get_driver_from_any_zone(some_close_zones)
 
                 if chosen_driver is None:
-                    chosen_driver = self.free_drivers.pop()
-                    self.free_drivers.add(chosen_driver)
-                    zone = self.get_zone(chosen_driver.last_location)
+                    chosen_driver = self.driver_status.get_driver_from_status('free')
+                zone = chosen_driver.last_location
+                
+                #the chosen driver is free, so generate a movement event from the driver to the customer
+                self.zones.remove_driver(zone, chosen_driver)
+                self.driver_status.shift_driver(chosen_driver, 'free', 'busy')
 
-            #last case scenario if no free driver is available
-            if chosen_driver is None:
+                #add passenger and add the start of a movement
+                chosen_driver.add_passenger(event.passenger)
+                chosen_driver.add_start_of_movement(event.time, zone)
+
+                #generate a movement time for the movement
+                movement_time = self.generate_movement_time(zone, pickup_zone)
+                return Movement(event.time + movement_time, chosen_driver, zone, pickup_zone)
+
+            elif status_counts['busy'] > 0:
                 #choose any busy driver
-                chosen_driver = self.busy_drivers.pop()
-                self.busy_drivers.add(chosen_driver)
+                chosen_driver = self.driver_status.get_driver_from_status('busy')
+
+                #add passenger to the driver's queue
+                chosen_driver.add_passenger(event.passenger)
+
+                #shift the driver's status to max queue if the max queue is hit
+                if chosen_driver.hit_max_queue():
+                    self.driver_status.shift_driver(chosen_driver, 'busy','max_queue')
+
+            else:
+                self.unserved_customers.append(event.passenger)
             toc = time.time()
             self.timed_stats['choose_driver'][0] += toc - tic
             self.timed_stats['choose_driver'][1] += 1
-            
-            #using this chosen driver, check status
-            if not chosen_driver.is_moving():
-                #return a movement event
-                #update the zone's drivers and the passenger's pickup zone drivers
-                #update the driver's movement history
-                zone.remove_driver(chosen_driver)
-                self.free_drivers.remove(chosen_driver)
-                self.busy_drivers.add(chosen_driver)
-
-                chosen_driver.add_start_of_movement(event.time, zone.zone)
-                chosen_driver.add_passenger(event.passenger)
-                #generate a movement time from zone to zone
-                movement_time = self.generate_movement_time(zone.zone, pickup_zone.zone)
-                return Movement(event.time, chosen_driver, pickup_zone, movement_time)
-            
-            else:
-                #add the passenger to the driver's queue
-                chosen_driver.add_passenger(event.passenger)
     
     def process_movement_event(self, event):
-        
-        #at the end of a movement event, the driver will be picking up a passenger in queue
-        #pop the next passenger
-        #change the driver's location in zone data
-        #update driver movement history
-        #update driver passenger
-        #return another movement event (which is a trip event)
+
         driver = event.driver
         passenger = driver.pop_next_passenger()
+
+        #if the driver's queue length is no longer the max queue, shift the driver's status
+        if self.driver_status.driver_in_status(driver, 'max_queue') and not driver.hit_max_queue():
+            self.driver_status.shift_driver(driver, 'max_queue', 'busy')
         
-        dropoff_zone = self.get_zone(passenger.end)
-        
-        driver.add_end_of_movement(event.time, event.end_zone.zone)
-        driver.add_start_of_movement(event.time, event.end_zone.zone)
+        driver.add_end_of_movement(event.time, event.end_zone)
+        driver.add_start_of_movement(event.time, event.end_zone)
         driver.passenger = passenger
-        
-        return Movement(event.time, driver, dropoff_zone, passenger.service, passenger)
+
+        return Trip(event.time + passenger.service, driver, passenger)
     
     def process_trip_event(self, event):
         
-        #end of a trip event, driver will be dropping off a passenger and will need to get the next passenger in queue
-        #or idle if no other passenger
+        #at the end of a trip event the driver goes to the next passenger, is idle, or picks up from the unserved queue
         current_passenger = event.passenger
         current_passenger.departure_time = event.time
         driver = event.driver
@@ -199,70 +242,61 @@ class City:
         #get next passenger
         passenger = driver.get_next_passenger()
         if passenger is None:
-            event.end_zone.add_driver(driver)
-            self.free_drivers.add(driver)
-            if driver in self.marked_for_departure_drivers:
-                self.marked_for_departure_drivers.remove(driver)
+            self.zones.add_driver(event.end_zone(), driver)
+            if self.driver_status.driver_in_status(driver, 'marked_for_departure'):
+                self.driver_status.shift_driver(driver, 'marked_for_departure', 'free')
             else:
-                self.busy_drivers.remove(driver)
-            #also need to check if a departure event should be generated
-            #this check only happens if the driver is currently active
-            #need to check if the event time is greater than the end and less than the start
-            #OR if the event time is greater than the end AND greater than the start
-            tic = time.time()
+                self.driver_status.shift_driver(driver, 'busy', 'free')
+
             if driver.out_of_schedule(event.time):
                 driver_dep_event = DriverDeparture(driver, event.time)
-                toc = time.time()
-                self.timed_stats['checking_driver_end'][0] += toc - tic
-                self.timed_stats['checking_driver_end'][1] += 1
                 return driver_dep_event
-        else:
-            #2 cases, either the passenger is in the zone (generating a trip event)
-            #or the passenger is in another zone (generating a movement event to that zone)
-            if current_passenger.end == passenger.start:
-                #generate a trip event
-                #change driver location
-                #update driver movement
-                #update driver passenger
-                #return a trip event
-                passenger = driver.pop_next_passenger()
-                zone = self.get_zone(passenger.end)
-                
-                driver.passenger = passenger
-                driver.add_start_of_movement(event.time, passenger.start)
-                
-                return Movement(event.time, driver, zone, passenger.service, passenger)
-            
             else:
-                #generate a movement event to the next passenger
-                zone = self.get_zone(passenger.start)
-                driver.add_start_of_movement(event.time, current_passenger.end)
+                #if no departure is scheduled, start serving the customers waiting
+                if len(self.unserved_customers) > 0:
+                    passenger = self.unserved_customers.popleft()
+                    return self.serve_unserved_passenger(event.time, current_passenger.end, driver, passenger)
 
-                movement_time = self.generate_movement_time(event.end_zone.zone, zone.zone)
-
-                return Movement(event.time, driver, zone, movement_time)
+        else:
+            #move to the next passenger
+            driver.add_start_of_movement(event.time, current_passenger.end)
+            movement_time = self.generate_movement_time(current_passenger.end, passenger.start)
+            return Movement(event.time + movement_time, driver, current_passenger.end, passenger.start)
 
     def process_driver_arrival(self, event):
         #add the driver to the free driver pool
         #add the driver to the zone he starts in
         #remove from inactive driver list
-        event.driver.last_location = event.driver.start_zone
-        self.free_drivers.add(event.driver)
-        self.inactive_drivers.remove(event.driver)
-        self.get_zone(event.driver.start_zone).add_driver(event.driver)
+        driver = event.driver
+        driver.last_location = driver.start_zone
+        self.driver_status.shift_driver(driver, 'inactive', 'free')
+        self.zones.add_driver(driver.start_zone, driver)
+
+        if len(self.unserved_customers) > 0:
+            passenger = self.unserved_customers.popleft()
+            return self.serve_unserved_passenger(event.time, driver.start_zone, driver, passenger)
 
     def process_driver_departure(self, event):
 
+        driver = event.driver
+
         #if the driver is busy, just do nothing and another departure event will be generated
-        if event.driver in self.free_drivers:
-            self.free_drivers.remove(event.driver)
-            self.inactive_drivers.add(event.driver)
-            self.get_zone(event.driver.last_location).remove_driver(event.driver)
-        elif event.driver in self.busy_drivers:
-            self.busy_drivers.remove(event.driver)
-            self.marked_for_departure_drivers.add(event.driver)
-        elif event.driver in self.marked_for_departure_drivers:
-            pass
+        if self.driver_status.driver_in_status(driver, 'free'):
+            self.driver_status.shift_driver(driver, 'free', 'inactive')
+            self.zones.remove_driver(driver.last_location, driver)
+        #shift the other drivers into marked for departure, so that they aren't given new passengers
+        elif self.driver_status.driver_in_status(driver, 'busy'):
+            self.driver_status.shift_driver(driver, 'busy', 'marked_for_departure')
+        elif self.driver_status.driver_in_status(driver, 'max_queue'):
+            self.driver_status.shift_driver(driver, 'max_queue', 'marked_for_departure')
+
+    def serve_unserved_passenger(self, current_time, current_location, driver, passenger):
+        self.driver_status.shift_driver(driver, 'free', 'busy')
+        self.zones.remove_driver(driver.last_location, driver)
+        driver.add_passenger(passenger)
+        driver.add_start_of_movement(current_time, current_location)
+        movement_time = self.generate_movement_time(current_location, passenger.start)
+        return Movement(current_time + movement_time, driver, current_location, passenger.start)
 
     def formatted_stats(self):
         s = ''

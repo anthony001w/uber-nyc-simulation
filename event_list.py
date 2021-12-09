@@ -3,46 +3,55 @@ import time
 
 class Event:
     
-    def __init__(self, time_of_event):  
+    def __init__(self, time_of_event, type):  
         self.time = time_of_event
+        self.type = type
         
 class Arrival(Event):
     
     def __init__(self, passenger):
-        Event.__init__(self, passenger.time)
+        Event.__init__(self, passenger.time, 'Arrival')
         self.passenger = passenger
-        self.type = 'Arrival'
-        
-    def __str__(self):
-        return 'Arrival\n' + str(self.passenger)
 
 class DriverArrival(Event):
     
     def __init__(self, driver):
-        Event.__init__(self, driver.start)
+        Event.__init__(self, driver.start, 'Driver Arrival')
         self.driver = driver 
-        self.type = 'Driver Arrival'
     
 class DriverDeparture(Event):
     
     def __init__(self, driver, t = 0):
         t = max(t, driver.end)
-        Event.__init__(self, t)
+        Event.__init__(self, t, 'Driver Departure')
         self.driver = driver 
-        self.type = 'Driver Departure'
     
 class Movement(Event):
         
-    def __init__(self, current_time, driver, destination_zone, driving_time, passenger = None):
-        Event.__init__(self, current_time + driving_time)
-        self.driving_time = driving_time
+    def __init__(self, end_of_movement_time, driver, start_zone, destination_zone):
+        Event.__init__(self, end_of_movement_time, 'Movement')
+        self.driver = driver
+        self.start_zone = start_zone
+        self.end_zone = destination_zone
+
+    def start_zone(self):
+        return self.start_zone
+    
+    def end_zone(self):
+        return self.end_zone
+
+class Trip(Event):
+
+    def __init__(self, end_of_trip_time, driver, passenger):
+        Event.__init__(self, end_of_trip_time, 'Trip')
         self.driver = driver
         self.passenger = passenger
-        self.end_zone = destination_zone
-        self.type = 'Movement' if passenger is None else 'Trip'
     
-    def __str__(self):
-        return f'Movement\nEnd Time: {self.time} \nEnd Zone: {self.end_zone} \nCurrent Time: {self.time - self.driving_time}'
+    def start_zone(self):
+        return self.passenger.start
+
+    def end_zone(self):
+        return self.passenger.end
 
 class EventList:
     

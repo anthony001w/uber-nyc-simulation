@@ -158,8 +158,8 @@ def generate_arrivals_per_zone(zone_hourly_arrivals = hourly_arrival_rate,
     return zone_arrivals
 
 def simulate_with_individual_drivers(arrivals,
-                                    preferred_driver_availability,
                                      driver_distribution = 'proportional',
+                                     preferred_driver_availability = 3*mm['Driver Count'].values,
                                      odmatrix = trip_time_data,
                                      pickup_data = hourly_arrival_rate):
     #convert arrivals into passengers, and then into events
@@ -176,8 +176,6 @@ def simulate_with_individual_drivers(arrivals,
     #setup driver schedules and insert driver arrivals and departures into the initial event list 
     #everything is under the city class
     if driver_distribution == 'proportional':
-        
-        zones = []
 
         #generate driver schedules
         dschedules = generate_driver_schedules(preferred_driver_availability)
@@ -187,21 +185,18 @@ def simulate_with_individual_drivers(arrivals,
         #number of drivers per zone
         #use the pickup data to do this
         arrivals_per_zone = pickup_data.sum(axis=1)
-        dcounts = driver_count * (arrivals_per_zone / arrivals_per_zone.sum())
-        dcounts = np.floor(dcounts)
+        dcounts = np.floor(driver_count * (arrivals_per_zone / arrivals_per_zone.sum()))
         
         driver_index = 0
-        for i in range(1,264):
-            if i in dcounts.index:
-                for j in range(int(dcounts.loc[i])):
-                    d = Driver(i, dschedules[driver_index][0], dschedules[driver_index][1])
-                    #also want to add the driver departure and arrival to the initial event list
-                    initial_events.append(DriverArrival(d))
-                    initial_events.append(DriverDeparture(d))
-                    drivers.append(d)
-                    pbar.update(1)
-                    driver_index += 1
-            zones.append(Zone(i))
+        for i in dcounts.index:
+            for j in range(int(dcounts.loc[i])):
+                d = Driver(i, dschedules[driver_index][0], dschedules[driver_index][1])
+                #also want to add the driver departure and arrival to the initial event list
+                initial_events.append(DriverArrival(d))
+                initial_events.append(DriverDeparture(d))
+                drivers.append(d)
+                pbar.update(1)
+                driver_index += 1
         
         for i in range(driver_count - len(drivers)):
             z = np.random.choice(np.arange(1,264))
@@ -212,7 +207,7 @@ def simulate_with_individual_drivers(arrivals,
             pbar.update(1)
             driver_index += 1
                     
-        city = City('NYC', zones, drivers, odmatrix)
+        city = City('NYC', np.arange(1,264), drivers, odmatrix)
 
     event_list = EventList(initial_events)
             
@@ -282,7 +277,7 @@ sys.stdout = Logger(f'{dir_name}/logfile.txt')
 minimum_active_trips = load('minimum_active_uber_trips')
 preferred_driver_availability = minimum_active_trips['Driver Count'].values
 
-passenger_details, dhistory, chistory = simulate_n_days(num_replications, preferred_driver_availability)
+passenger_details, dhistory, chistory = simulate_n_days(num_replications, 2*preferred_driver_availability)
 
 passenger_details.to_parquet(dir_name + '/passenger_parquet')
 

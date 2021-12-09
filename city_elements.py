@@ -1,6 +1,5 @@
 from collections import deque
 import pandas as pd
-import time
 
 class Driver:
     
@@ -8,7 +7,6 @@ class Driver:
     def __init__(self, start_zone, schedule_start, schedule_end):
         self.start, self.end = schedule_start, schedule_end
         self.start_zone = start_zone
-        self.marked_for_departure = False
 
         self.last_location = start_zone
         self.last_time = 0
@@ -31,11 +29,11 @@ class Driver:
     
     def add_start_of_movement(self, start_time, start):
         #start time, end time, last location, next location, is moving, has passenger
-        self.movement_history.append((self.last_time, start_time, self.last_location, start, False, False))
+        self.movement_history.append((self.last_time, start_time, self.last_location, start, False, False, len(self.passenger_queue)))
         self.last_time = start_time
 
     def add_end_of_movement(self, end_time, end, passenger = None):
-        self.movement_history.append((self.last_time, end_time, self.last_location, end, True, passenger != None))
+        self.movement_history.append((self.last_time, end_time, self.last_location, end, True, passenger != None, len(self.passenger_queue)))
         self.last_time = end_time
         self.last_location = end
     
@@ -48,8 +46,11 @@ class Driver:
         elif self.start > self.end:
             return system_time > self.end and system_time < self.start
 
+    def hit_max_queue(self):
+        return len(self.passenger_queue) >= 3
+
     def return_movement_dataframe(self):
-        return pd.DataFrame(self.movement_history, columns = ['start_time', 'end_time', 'start_zone', 'end_zone', 'is_moving', 'has_passenger'])
+        return pd.DataFrame(self.movement_history, columns = ['start_time', 'end_time', 'start_zone', 'end_zone', 'is_moving', 'has_passenger', 'queue_length'])
     
 class Passenger:
     
@@ -65,25 +66,3 @@ class Passenger:
         
     def __str__(self):
         return f"Arrival Time: {self.time} \nStart Zone: {self.start} \nEnd Zone: {self.end} \nTrip Time: {self.service}"
-    
-class Zone:
-    
-    #stores drivers
-    def __init__(self, zone_id):
-        self.zone = zone_id
-        self.drivers = set()
-        
-    def get_available_driver(self):
-        if len(self.drivers) == 0:
-            return None
-        d = self.drivers.pop()
-        self.drivers.add(d)
-        return d
-    
-    def add_driver(self, driver):
-        self.drivers.add(driver)
-        
-    def remove_driver(self, driver):
-        self.drivers.remove(driver)
-        
-    #could add additional functionality like calculating distance between zones
