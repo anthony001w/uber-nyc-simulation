@@ -25,7 +25,7 @@ def generate_points_lines(zone_id, num_required, zone_dict, extent_dict):
 
 def generate_positions(driver_movement_filenames, zone_dict, folder, mode = 'random'):
 
-    filepath = f'../output/{folder}/driver_generated_points_{mode}'
+    filepath = f'output/{folder}/driver_generated_points_{mode}'
 
     #load some provided driver movement data
     driver_history = pd.read_parquet(driver_movement_filenames).reset_index(drop = True)

@@ -1,3 +1,4 @@
+from re import T
 from city_elements import *
 import time
 
@@ -58,7 +59,6 @@ class EventList:
     def __init__(self, initial_event_list):
         self.events = deque(sorted(initial_event_list, key = lambda e: e.time))
         self.timed_stats = {'insertion speed':[0,0], 
-                            'pop speed':[0,0], 
                             'search speed':[0,0]}
         
     def insert_event(self, event):
@@ -78,20 +78,10 @@ class EventList:
         toc = time.time()
         self.timed_stats['search speed'][0] += toc - tic
         self.timed_stats['search speed'][1] += 1
-        
-        tic = time.time()
         self.events.insert(bounds[0], event)
-        toc = time.time()
-        self.timed_stats['insertion speed'][0] += toc - tic
-        self.timed_stats['insertion speed'][1] += 1
         
     def iterate_next_event(self):
-        tic = time.time()
-        e = self.events.popleft()
-        toc = time.time()
-        self.timed_stats['pop speed'][0] += toc - tic
-        self.timed_stats['pop speed'][1] += 1
-        return e
+        return self.events.popleft()
         
     def is_finished(self):
         return len(self.events) == 0

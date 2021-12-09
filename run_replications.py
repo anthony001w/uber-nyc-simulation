@@ -23,10 +23,10 @@ class Logger(object):
         # you might want to specify some extra behavior here.
         pass    
 
-pickup_data = pd.read_pickle('arrival_and_dropoff_distributions')
+pickup_data = pd.read_pickle('input_data/arrival_and_dropoff_distributions')
 hourly_arrival_rate =  pickup_data.apply(lambda item: item[0])
 dropoff_frequency  = pickup_data.apply(lambda  item: item[1] / item[1].sum())
-trip_time_data = pd.read_parquet('trip_time_means')
+trip_time_data = pd.read_parquet('input_data/trip_time_means')
 
 def generate_bundle(size = 1000):
     """Generates uniform centers of intervals (each interval represents a driver schedule
@@ -158,8 +158,8 @@ def generate_arrivals_per_zone(zone_hourly_arrivals = hourly_arrival_rate,
     return zone_arrivals
 
 def simulate_with_individual_drivers(arrivals,
+                                     preferred_driver_availability,
                                      driver_distribution = 'proportional',
-                                     preferred_driver_availability = 3*mm['Driver Count'].values,
                                      odmatrix = trip_time_data,
                                      pickup_data = hourly_arrival_rate):
     #convert arrivals into passengers, and then into events
@@ -274,10 +274,10 @@ os.mkdir(dir_name)
 
 sys.stdout = Logger(f'{dir_name}/logfile.txt')
 
-minimum_active_trips = load('minimum_active_uber_trips')
+minimum_active_trips = load('input_data/minimum_active_uber_trips')
 preferred_driver_availability = minimum_active_trips['Driver Count'].values
 
-passenger_details, dhistory, chistory = simulate_n_days(num_replications, 2*preferred_driver_availability)
+passenger_details, dhistory, chistory = simulate_n_days(num_replications, 1.8 * preferred_driver_availability)
 
 passenger_details.to_parquet(dir_name + '/passenger_parquet')
 

@@ -89,7 +89,7 @@ def convert_polygons_for_sampling(xy_pixel_polygons):
 	return zone_polygon_dict
 
 
-def create_or_load_polygon_info(file_name = 'polygon_info'):
+def create_or_load_polygon_info(file_name = 'viz/polygon_info'):
 	#polygon data only needs to be created once
 	if not os.path.exists(file_name):
 		with Socrata('data.cityofnewyork.us', 'vA3MfkSw5kKhpzNkitJkv5yFP') as client:

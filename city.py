@@ -118,8 +118,7 @@ class City:
                 default_means.append(np.mean(default_means))
         self.default_times = default_means
 
-        self.timed_stats = {'generating_movement_times':[0,0],
-                            'choose_driver':[0,0]}
+        self.timed_stats = {'generating_movement_times':[0,0]}
 
     def process_event(self, event):
 
@@ -175,7 +174,6 @@ class City:
             chosen_driver = None
             status_counts = self.driver_status.get_status_counts()
             
-            tic = time.time()
             #choosing a driver
             if status_counts['free'] > 0:
                 #only look at the 5 closest zones
@@ -211,9 +209,6 @@ class City:
 
             else:
                 self.unserved_customers.append(event.passenger)
-            toc = time.time()
-            self.timed_stats['choose_driver'][0] += toc - tic
-            self.timed_stats['choose_driver'][1] += 1
     
     def process_movement_event(self, event):
 
@@ -291,10 +286,14 @@ class City:
             self.driver_status.shift_driver(driver, 'max_queue', 'marked_for_departure')
 
     def serve_unserved_passenger(self, current_time, current_location, driver, passenger):
+        #shift the driver from free to busy and remove the driver from where they are currently
         self.driver_status.shift_driver(driver, 'free', 'busy')
         self.zones.remove_driver(driver.last_location, driver)
+
+        #add passenger and movement history
         driver.add_passenger(passenger)
         driver.add_start_of_movement(current_time, current_location)
+
         movement_time = self.generate_movement_time(current_location, passenger.start)
         return Movement(current_time + movement_time, driver, current_location, passenger.start)
 

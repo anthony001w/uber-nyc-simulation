@@ -16,7 +16,7 @@ else:
 	SPEED_OF_SIM = int(input('Enter the speed of the simulation: '))
 	MODE = input('Mode (random/lines): ')
 
-DRIVER_MOVEMENT_FILENAME = f'../output/{FOLDER}/driver_histories_parquet'
+DRIVER_MOVEMENT_FILENAME = f'output/{FOLDER}/driver_histories_parquet'
 
 xy_pixel_polygons, zone_dict = create_or_load_polygon_info()
 
@@ -41,9 +41,9 @@ pygame.init()
 size = width, height = SCREEN_SIZE
 screen = pygame.display.set_mode(size)
 
-driver_with_passenger = load_image('passenger.png')
-driver_without_passenger = load_image('nopassenger.png')
-driver_idle = load_image('idle.png')
+driver_with_passenger = load_image('viz/passenger.png')
+driver_without_passenger = load_image('viz/nopassenger.png')
+driver_idle = load_image('viz/idle.png')
 
 driver_rectangles = [driver_without_passenger.get_rect() for i in range(driver_animations.driver_count)]
 
