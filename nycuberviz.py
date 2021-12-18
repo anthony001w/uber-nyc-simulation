@@ -3,6 +3,8 @@ from DriverAnimation import DriverAnimation
 from generate_polygon_info import *
 from generate_positions import *
 
+"""this won't work for previously generated outputs that don't generate the same driver history"""
+
 #changing the screen size argument messes with everything don't do it
 SCREEN_SIZE = (1200,800)
 if len(sys.argv) == 5:
@@ -30,7 +32,7 @@ def draw_bg(poly_list, s):
 		pygame.draw.polygon(s, 0, p[0], width = 1)
 
 """Loads an image with a set alpha value"""
-def load_image(image_path, size = (3,3), alpha = 150):
+def load_image(image_path, size = (3,3), alpha = 200):
 	im = pygame.image.load(image_path)
 	im = pygame.transform.scale(im, size).convert_alpha()
 	im.set_alpha(alpha)
@@ -41,9 +43,9 @@ pygame.init()
 size = width, height = SCREEN_SIZE
 screen = pygame.display.set_mode(size)
 
-driver_with_passenger = load_image('viz/passenger.png')
-driver_without_passenger = load_image('viz/nopassenger.png')
-driver_idle = load_image('viz/idle.png')
+driver_with_passenger = load_image('viz/passenger.png', alpha = 200)
+driver_without_passenger = load_image('viz/nopassenger.png', alpha = 150)
+driver_idle = load_image('viz/idle.png', alpha = 20)
 
 driver_rectangles = [driver_without_passenger.get_rect() for i in range(driver_animations.driver_count)]
 

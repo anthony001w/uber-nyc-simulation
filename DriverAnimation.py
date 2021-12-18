@@ -36,8 +36,8 @@ class DriverAnimation:
         curr_animations = self.movement_df.loc[self.animation_indices]
         stay_on_current = self.updated_frames <= curr_animations['frames'].values
 
-        self.updated_frames = self.updated_frames * stay_on_current
-        self.animation_indices = self.animation_indices + ~stay_on_current
+        self.updated_frames = self.updated_frames * (stay_on_current | self.finished_animation)
+        self.animation_indices = self.animation_indices + ~(stay_on_current | self.finished_animation)
         self.finished_animation = self.finished_animation | (self.animation_indices > self.last_indices)
         fanimation = self.finished_animation.reshape((self.driver_count, 1))
         self.animation_indices = np.minimum(self.animation_indices, self.last_indices)

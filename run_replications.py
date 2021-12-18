@@ -76,6 +76,13 @@ def update_availability_arr(availability, bundle, preferred_availability, accept
     diff = (updated_avail - preferred_availability)
     return updated_avail, diff, bounds[accepted_drivers]
 
+"""Tolerated_under_preferred -> maximum difference between 
+the number of generated drivers at any minute and the number of preferred drivers at any minute
+
+Acceptable_overlap -> the number of minutes that can be overlapped when adding a driver to the generated driver list
+
+chunk_size -> number of driver schedules generated at once
+"""
 def generate_driver_schedules(preferred_availability, 
     tolerated_under_preferred = 3000, 
     acceptable_overlap = 60, 
@@ -277,7 +284,10 @@ sys.stdout = Logger(f'{dir_name}/logfile.txt')
 minimum_active_trips = load('input_data/minimum_active_uber_trips')
 preferred_driver_availability = minimum_active_trips['Driver Count'].values
 
-passenger_details, dhistory, chistory = simulate_n_days(num_replications, 1.8 * preferred_driver_availability)
+"""Change the number after num_replications to either preferred_driver_availability or a constant or some other 
+   function that records the # of drivers for every minute in the day (0 - 1439)
+"""
+passenger_details, dhistory, chistory = simulate_n_days(num_replications, 12000)
 
 passenger_details.to_parquet(dir_name + '/passenger_parquet')
 
